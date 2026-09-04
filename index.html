@@ -2148,11 +2148,19 @@ function buildShiftPanel(shiftType){
     wrap.appendChild(pendingNote);
   }
 
-  const bottomBar = buildBottomBar();
-  const saveBtn = bottomBar.querySelector('button.primary');
-  saveBtn.addEventListener('click', ()=>{
-    if(state.role === 'barmaid') store.needsReview = true;
+  const bottomBar = document.createElement('div');
+  bottomBar.className = 'bottom-bar no-print';
+  const saveStatus = document.createElement('div');
+  saveStatus.className = 'status';
+  saveStatus.textContent = "Pas encore enregistré.";
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary';
+  saveBtn.textContent = 'Enregistrer';
+  saveBtn.addEventListener('click', async ()=>{
+    if(state.role === 'barmaid') store.needsReview = true; // set BEFORE saving, not after
+    await saveData(saveStatus);
   });
+  bottomBar.appendChild(saveStatus); bottomBar.appendChild(saveBtn);
   wrap.appendChild(bottomBar);
 
   if(state.role === 'boss' && store.needsReview){
@@ -2701,6 +2709,12 @@ async function refreshNotifications(){
     notifDropdown.style.display = 'none';
   }
 }
+
+// Check for new pending reviews every 30 seconds while Boss is logged in and watching.
+setInterval(()=>{
+  if(state.role === 'boss') refreshNotifications();
+}, 30000);
+
 notifBtn.addEventListener('click', ()=>{
   if(notifDropdown.style.display === 'block'){
     notifDropdown.style.display = 'none';
