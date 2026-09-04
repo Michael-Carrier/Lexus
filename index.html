@@ -479,6 +479,31 @@
   .notif-item .notif-when{ color:var(--ink-soft); font-size:0.78rem; }
   .notif-empty{ padding:14px; font-size:0.85rem; color:var(--ink-soft); }
 
+  #askAiBox{
+    max-width:900px;
+    margin:16px auto 0;
+    padding:14px 20px;
+    border:1px solid var(--ink);
+    background:var(--input-bg);
+    font-family:"Avenir Next","Segoe UI",sans-serif;
+  }
+  #askAiInput{
+    flex:1;
+    padding:9px 10px;
+    font-size:0.9rem;
+    border:1px solid var(--ink);
+    background:var(--input-bg);
+    font-family:inherit;
+  }
+  #askAiAnswer{
+    margin-top:10px;
+    font-size:0.88rem;
+    line-height:1.5;
+    white-space:pre-wrap;
+  }
+  #askAiAnswer.loading{ color:var(--ink-soft); font-style:italic; }
+  #askAiAnswer.error{ color:#B0402A; }
+
   @media print{
     .no-print{ display:none !important; }
     @page{ size: landscape; margin: 8mm; }
@@ -544,6 +569,15 @@
   <button id="notifBtn" class="print-btn no-print" style="position:absolute; top:28px; right:24px; display:none;"></button>
   <div id="notifDropdown" style="display:none;"></div>
 </header>
+
+<div id="askAiBox" class="no-print" style="display:none;">
+  <label class="login-label" style="margin-top:0;">Demander à l'IA (Boss)</label>
+  <div style="display:flex; gap:8px;">
+    <input type="text" id="askAiInput" placeholder="ex: Combien Tanya a vendu ce mois-ci?">
+    <button id="askAiBtn" class="primary">Demander</button>
+  </div>
+  <div id="askAiAnswer"></div>
+</div>
 
 <div id="prefsModal" class="no-print" style="display:none;">
   <div class="prefs-box">
@@ -2676,6 +2710,7 @@ async function attemptLogin(){
     loginScreen.style.display = 'none';
     appShell.style.display = 'block';
     renderDayButtons(); renderTabs();
+    document.getElementById('askAiBox').style.display = (role === 'boss') ? 'block' : 'none';
     fileStatusEl.textContent = 'Chargement...';
     await loadWeekFromSupabase(state.week);
     renderPanel();
@@ -2691,6 +2726,7 @@ logoutBtn.addEventListener('click', ()=>{
   appShell.style.display = 'none';
   loginScreen.style.display = 'flex';
   pinInput.value = ''; loginError.textContent = '';
+  document.getElementById('askAiBox').style.display = 'none';
 });
 
 // ---------- Notifications (boss only) ----------
@@ -2794,6 +2830,45 @@ savePinBtn.addEventListener('click', async ()=>{
   }
   newPinInput.value = '';
 });
+
+// ---------- Ask AI (boss only) ----------
+const ASK_AI_URL = 'https://tbnblorbmxthkbbdtekg.supabase.co/functions/v1/rapid-endpoint';
+const askAiInput = document.getElementById('askAiInput');
+const askAiBtn = document.getElementById('askAiBtn');
+const askAiAnswer = document.getElementById('askAiAnswer');
+
+async function askAi(){
+  const question = askAiInput.value.trim();
+  if(!question) return;
+  askAiAnswer.className = 'loading';
+  askAiAnswer.textContent = 'Réflexion en cours...';
+  askAiBtn.disabled = true;
+  try{
+    const res = await fetch(ASK_AI_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'apikey': SUPABASE_KEY
+      },
+      body: JSON.stringify({ question })
+    });
+    const result = await res.json();
+    if(result.error){
+      askAiAnswer.className = 'error';
+      askAiAnswer.textContent = 'Erreur: ' + result.error;
+    } else {
+      askAiAnswer.className = '';
+      askAiAnswer.textContent = result.answer;
+    }
+  }catch(e){
+    askAiAnswer.className = 'error';
+    askAiAnswer.textContent = 'Erreur de connexion: ' + (e.message||e);
+  }
+  askAiBtn.disabled = false;
+}
+askAiBtn.addEventListener('click', askAi);
+askAiInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') askAi(); });
 
 // ---------- init ----------
 renderPanel();
