@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Registre du bar</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --paper:#F3EFE7;
@@ -457,6 +458,27 @@
     --green-fill:#D9C9A0; --blue-fill:#C9B896; --off:#C4B29A;
   }
 
+  #notifBtn{
+    background:var(--copper); color:#fff; border-color:var(--copper);
+    font-weight:600;
+  }
+  #notifBtn:hover{ background:var(--copper-deep); }
+  #notifDropdown{
+    position:absolute; top:60px; right:24px; z-index:50;
+    background:var(--input-bg); border:1px solid var(--ink);
+    min-width:260px; max-width:340px;
+    font-family:"Avenir Next","Segoe UI",sans-serif;
+  }
+  .notif-item{
+    padding:10px 14px; border-bottom:1px solid var(--line);
+    cursor:pointer; font-size:0.85rem;
+  }
+  .notif-item:last-child{ border-bottom:none; }
+  .notif-item:hover{ background:var(--paper); }
+  .notif-item .notif-who{ font-weight:600; }
+  .notif-item .notif-when{ color:var(--ink-soft); font-size:0.78rem; }
+  .notif-empty{ padding:14px; font-size:0.85rem; color:var(--ink-soft); }
+
   @media print{
     .no-print{ display:none !important; }
     @page{ size: landscape; margin: 8mm; }
@@ -512,13 +534,15 @@
 </div>
 
 <div id="appShell" style="display:none;">
-<header class="no-print">
+<header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
   <p>Prototype hors-ligne — étape 1 (le proprio remplit lui-même les formulaires papier)</p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
   </div>
+  <button id="notifBtn" class="print-btn no-print" style="position:absolute; top:28px; right:24px; display:none;"></button>
+  <div id="notifDropdown" style="display:none;"></div>
 </header>
 
 <div id="prefsModal" class="no-print" style="display:none;">
@@ -551,7 +575,7 @@
 </div>
 
 <div class="filebar no-print">
-  <span class="status" id="fileStatus">Prêt — le premier clic sur "Enregistrer" demandera une fois où garder le fichier.</span>
+  <span class="status" id="fileStatus">Connexion à Supabase...</span>
 </div>
 
 <div class="tabs no-print" id="tabBar"></div>
@@ -734,8 +758,7 @@ const themes = [
 function applyTheme(themeId){
   document.body.classList.remove('theme-nuit','theme-rose','theme-espresso');
   if(themeId && themeId !== 'jour') document.body.classList.add('theme-'+themeId);
-  if(!data.settings) data.settings = {};
-  data.settings.theme = themeId;
+  try{ localStorage.setItem('barTheme', themeId); }catch(e){ /* ignore */ }
 }
 
 function ensureBucket(){
@@ -753,7 +776,13 @@ weeks.forEach(m=>{
   weekSelect.appendChild(opt);
 });
 weekSelect.value = state.week;
-weekSelect.addEventListener('change', ()=>{ state.week = weekSelect.value; state.subView = null; state.pdfView = null; renderTabs(); renderPanel(); });
+weekSelect.addEventListener('change', async ()=>{
+  state.week = weekSelect.value; state.subView = null; state.pdfView = null;
+  renderTabs();
+  fileStatusEl.textContent = 'Chargement...';
+  await loadWeekFromSupabase(state.week);
+  renderPanel();
+});
 
 const dayButtonsHost = document.getElementById('dayButtons');
 function renderDayButtons(){
@@ -2112,7 +2141,34 @@ function buildShiftPanel(shiftType){
   // Interac tax block (unchanged — separate from Jour/Nuit)
   wrap.appendChild(buildTaxBlock("Interac", store.interac));
 
-  wrap.appendChild(buildBottomBar());
+  if(store.needsReview){
+    const pendingNote = document.createElement('div');
+    pendingNote.style.cssText = 'font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.82rem; color:var(--copper-deep); font-weight:600; margin-bottom:10px;';
+    pendingNote.textContent = '🔔 En attente de révision par le propriétaire';
+    wrap.appendChild(pendingNote);
+  }
+
+  const bottomBar = buildBottomBar();
+  const saveBtn = bottomBar.querySelector('button.primary');
+  saveBtn.addEventListener('click', ()=>{
+    if(state.role === 'barmaid') store.needsReview = true;
+  });
+  wrap.appendChild(bottomBar);
+
+  if(state.role === 'boss' && store.needsReview){
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'primary';
+    confirmBtn.style.marginTop = '10px';
+    confirmBtn.textContent = 'Confirmer ces chiffres';
+    confirmBtn.addEventListener('click', async ()=>{
+      store.needsReview = false;
+      await syncWeekToSupabase(state.week);
+      await refreshNotifications();
+      renderPanel();
+    });
+    wrap.appendChild(confirmBtn);
+  }
+
   return wrap;
 }
 
@@ -2388,139 +2444,186 @@ function buildPrintButton(){
   return btn;
 }
 
-// ---------- JSON file persistence (auto, one-time setup) ----------
-let fileHandle = null;
-let pendingHandle = null;
+// ---------- Supabase persistence ----------
+const SUPABASE_URL = 'https://tbnblorbmxthkbbdtekg.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_2okRiKf4KoyruEgW6lSYLg_lvU0mKNv';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const fileStatusEl = document.getElementById('fileStatus');
-const fsAccessSupported = 'showSaveFilePicker' in window;
 
-const DB_NAME = 'barformsdb', STORE = 'handles';
-function idbOpen(){
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = ()=>{ req.result.createObjectStore(STORE); };
-    req.onsuccess = ()=>resolve(req.result);
-    req.onerror = ()=>reject(req.error);
-  });
-}
-async function idbSet(key, val){
-  const db = await idbOpen();
-  return new Promise((resolve,reject)=>{
-    const tx = db.transaction(STORE,'readwrite');
-    tx.objectStore(STORE).put(val,key);
-    tx.oncomplete = ()=>resolve();
-    tx.onerror = ()=>reject(tx.error);
-  });
-}
-async function idbGet(key){
-  const db = await idbOpen();
-  return new Promise((resolve,reject)=>{
-    const tx = db.transaction(STORE,'readonly');
-    const req = tx.objectStore(STORE).get(key);
-    req.onsuccess = ()=>resolve(req.result);
-    req.onerror = ()=>reject(req.error);
-  });
-}
-
-async function loadFromHandle(){
-  try{
-    const file = await fileHandle.getFile();
-    const text = await file.text();
-    if(text.trim()){
-      const parsed = JSON.parse(text);
-      Object.keys(data).forEach(k=>delete data[k]);
-      Object.assign(data, parsed);
-      restoreSettings();
-      renderPanel();
-    }
-  }catch(e){ /* empty or unreadable, just start fresh */ }
-}
-
-function restoreSettings(){
-  if(data.settings?.pins) Object.assign(rolePins, data.settings.pins);
-  if(data.settings?.theme) applyTheme(data.settings.theme);
-}
-
-async function writeToHandle(){
-  const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(data, null, 2));
-  await writable.close();
-}
-
-function setConnected(){
-  fileStatusEl.textContent = `Sauvegarde automatique active (${fileHandle.name}).`;
+function setConnected(msg){
+  fileStatusEl.textContent = msg || 'Connecté à Supabase.';
   fileStatusEl.classList.add('connected');
 }
-function setNeedsReconnect(){
-  fileStatusEl.textContent = 'Reconnexion nécessaire — clique "Enregistrer" une fois.';
+function setSyncError(msg){
+  fileStatusEl.textContent = msg;
   fileStatusEl.classList.remove('connected');
 }
 
-// Silent check on load: if we already have a remembered handle with live permission, use it with no prompt.
-(async ()=>{
-  if(!fsAccessSupported) return;
-  try{
-    const saved = await idbGet('fileHandle');
-    if(saved){
-      const perm = await saved.queryPermission({mode:'readwrite'});
-      if(perm === 'granted'){
-        fileHandle = saved;
-        await loadFromHandle();
-        setConnected();
-      } else {
-        pendingHandle = saved; // will silently re-request on next Save click (needs a user gesture)
-        setNeedsReconnect();
-      }
+// ---- Row <-> in-memory shape mappers ----
+function shiftRowToStore(row){
+  const store = {
+    bartender: row.bartender || "", start: row.start_time || "", end: row.end_time || "",
+    over: row.over ?? "", jour: row.jour ?? "", nuit: row.nuit ?? "",
+    hasSecondBartender: row.has_second_bartender || false,
+    bartender2: row.bartender2 || "", start2: row.start_time2 || "", end2: row.end_time2 || "",
+    needsReview: row.needs_review || false,
+    stock: row.stock || {},
+    interac: {
+      total: row.interac_total ?? "", subtotal: row.interac_subtotal ?? "",
+      tps: row.interac_tps ?? "", tvq: row.interac_tvq ?? ""
     }
-  }catch(e){ /* ignore */ }
-})();
-
-async function ensureFileHandle(){
-  if(fileHandle) return fileHandle;
-  if(pendingHandle){
-    try{
-      const perm = await pendingHandle.requestPermission({mode:'readwrite'});
-      if(perm === 'granted'){
-        fileHandle = pendingHandle;
-        await loadFromHandle();
-        setConnected();
-        return fileHandle;
-      }
-    }catch(e){ /* fall through to fresh picker */ }
-  }
-  if(!fsAccessSupported) return null;
-  try{
-    fileHandle = await window.showSaveFilePicker({
-      suggestedName: 'bar-data.json',
-      types: [{ description:'JSON', accept:{'application/json':['.json']} }]
-    });
-    await idbSet('fileHandle', fileHandle);
-    await writeToHandle();
-    setConnected();
-    return fileHandle;
-  }catch(e){ return null; }
+  };
+  const total = round2((Number(store.jour)||0) + (Number(store.nuit)||0));
+  const b = taxBreakdown(total);
+  store.cash = { total, subtotal:b.subtotal, tps:b.tps, tvq:b.tvq };
+  return store;
+}
+function storeToShiftRow(weekKey, day, shiftType, store){
+  return {
+    week_key: weekKey, day, shift_type: shiftType,
+    bartender: store.bartender || null, start_time: store.start || null, end_time: store.end || null,
+    over: store.over===""?null:Number(store.over),
+    jour: store.jour===""?null:Number(store.jour),
+    nuit: store.nuit===""?null:Number(store.nuit),
+    interac_total: store.interac?.total===""?null:Number(store.interac?.total),
+    interac_subtotal: store.interac?.subtotal===""?null:Number(store.interac?.subtotal),
+    interac_tps: store.interac?.tps===""?null:Number(store.interac?.tps),
+    interac_tvq: store.interac?.tvq===""?null:Number(store.interac?.tvq),
+    has_second_bartender: !!store.hasSecondBartender,
+    bartender2: store.bartender2 || null, start_time2: store.start2 || null, end_time2: store.end2 || null,
+    needs_review: !!store.needsReview,
+    stock: store.stock || {}
+  };
+}
+function pokerRowToStore(row){
+  return {
+    coupons: row.coupons ?? "", argent: row.argent ?? "",
+    total: row.total ?? "", machine: row.machine ?? "", guichet: row.guichet ?? ""
+  };
+}
+function storeToWeekSettingsRow(weekKey, sun){
+  return {
+    week_key: weekKey,
+    env: sun.env===""?null:Number(sun.env), factures: sun.factures===""?null:Number(sun.factures),
+    pool_tbxl: sun.poolTbxl===""?null:Number(sun.poolTbxl), pool_over: sun.poolOver===""?null:Number(sun.poolOver),
+    pinuts_tbxl: sun.pinutsTbxl===""?null:Number(sun.pinutsTbxl), fact_over: sun.factOver===""?null:Number(sun.factOver),
+    reading: sun.reading===""?null:Number(sun.reading),
+    bouteilles: sun.bouteilles===""?null:Number(sun.bouteilles), autres: sun.autres===""?null:Number(sun.autres),
+    paie_jaboin: sun.paieJaboin===""?null:Number(sun.paieJaboin),
+    guich_caisses: sun.guichCaisses===""?null:Number(sun.guichCaisses), paye_dan: sun.payeDan===""?null:Number(sun.payeDan),
+    depot: sun.depot===""?null:Number(sun.depot),
+    depart_manual_override: !!sun.departManualOverride,
+    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue)
+  };
+}
+function weekSettingsRowToStore(row){
+  return {
+    env: row.env ?? "", factures: row.factures ?? "", poolTbxl: row.pool_tbxl ?? "", poolOver: row.pool_over ?? "",
+    pinutsTbxl: row.pinuts_tbxl ?? "", factOver: row.fact_over ?? "", reading: row.reading ?? "",
+    bouteilles: row.bouteilles ?? "", autres: row.autres ?? "", paieJaboin: row.paie_jaboin ?? -350,
+    guichCaisses: row.guich_caisses ?? "", payeDan: row.paye_dan ?? "", depot: row.depot ?? "",
+    departManualOverride: row.depart_manual_override || false,
+    departManualValue: row.depart_manual_value ?? ""
+  };
 }
 
-function downloadSnapshot(){
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'bar-data.json';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+async function loadWeekFromSupabase(weekKey){
+  try{
+    const [shiftsRes, pokerRes, invRes, delRes, settingsRes] = await Promise.all([
+      sb.from('shifts').select('*').eq('week_key', weekKey),
+      sb.from('poker_daily').select('*').eq('week_key', weekKey),
+      sb.from('inventaire_daily').select('*').eq('week_key', weekKey),
+      sb.from('delivery_daily').select('*').eq('week_key', weekKey),
+      sb.from('week_settings').select('*').eq('week_key', weekKey).maybeSingle()
+    ]);
+    if(shiftsRes.error) throw shiftsRes.error;
+
+    if(!data[weekKey]) data[weekKey] = {};
+    dayNames.forEach(d=>{ if(!data[weekKey][d]) data[weekKey][d] = {}; });
+
+    (shiftsRes.data||[]).forEach(row=>{ data[weekKey][row.day][row.shift_type] = shiftRowToStore(row); });
+    (pokerRes.data||[]).forEach(row=>{ data[weekKey][row.day].misc = pokerRowToStore(row); });
+    (invRes.data||[]).forEach(row=>{ data[weekKey][row.day].inventaire = row.items || {}; });
+    (delRes.data||[]).forEach(row=>{ data[weekKey][row.day].delivery = row.items || {}; });
+    data[weekKey].sunday = settingsRes.data ? weekSettingsRowToStore(settingsRes.data) : {};
+
+    setConnected('Connecté à Supabase.');
+  }catch(e){
+    setSyncError('Erreur de connexion Supabase — ' + (e.message||e));
+  }
+}
+
+async function syncWeekToSupabase(weekKey){
+  const weekData = data[weekKey];
+  if(!weekData) return;
+  const shiftRows = [], pokerRows = [], invRows = [], delRows = [];
+  dayNames.forEach(d=>{
+    const bucket = weekData[d];
+    if(!bucket) return;
+    ['bartDay','bartNight'].forEach(st=>{
+      if(bucket[st]) shiftRows.push(storeToShiftRow(weekKey, d, st, bucket[st]));
+    });
+    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet})=>({
+      coupons: coupons===""?null:Number(coupons), argent: argent===""?null:Number(argent),
+      total: total===""?null:Number(total), machine: machine===""?null:Number(machine),
+      guichet: guichet===""?null:Number(guichet)
+    }))(bucket.misc) });
+    if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
+    if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
+  });
+
+  const ops = [];
+  if(shiftRows.length) ops.push(sb.from('shifts').upsert(shiftRows, {onConflict:'week_key,day,shift_type'}));
+  if(pokerRows.length) ops.push(sb.from('poker_daily').upsert(pokerRows, {onConflict:'week_key,day'}));
+  if(invRows.length) ops.push(sb.from('inventaire_daily').upsert(invRows, {onConflict:'week_key,day'}));
+  if(delRows.length) ops.push(sb.from('delivery_daily').upsert(delRows, {onConflict:'week_key,day'}));
+  if(weekData.sunday) ops.push(sb.from('week_settings').upsert(storeToWeekSettingsRow(weekKey, weekData.sunday), {onConflict:'week_key'}));
+
+  const results = await Promise.all(ops);
+  const failed = results.find(r=>r.error);
+  if(failed) throw failed.error;
 }
 
 async function saveData(statusEl){
-  const handle = await ensureFileHandle();
   const now = new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'});
-  if(handle){
-    await writeToHandle();
+  try{
+    await syncWeekToSupabase(state.week);
     statusEl.textContent = `Enregistré — ${now}`;
-  } else {
-    downloadSnapshot();
-    statusEl.textContent = `Fichier téléchargé (bar-data.json) — ${now}`;
+    setConnected('Connecté à Supabase.');
+  }catch(e){
+    statusEl.textContent = `Erreur d'enregistrement — ${e.message||e}`;
   }
 }
+
+async function loadPinsFromSupabase(){
+  try{
+    const { data: rows, error } = await sb.from('app_settings').select('*');
+    if(error) throw error;
+    (rows||[]).forEach(r=>{ rolePins[r.role] = r.pin; });
+  }catch(e){ /* fall back to local placeholder pins */ }
+}
+
+async function savePinToSupabase(role, pin){
+  await sb.from('app_settings').upsert({ role, pin }, {onConflict:'role'});
+}
+
+async function findPendingReviewsLive(){
+  try{
+    const { data: rows, error } = await sb.from('shifts').select('*').eq('needs_review', true);
+    if(error) throw error;
+    return (rows||[]).map(r=>({
+      weekK: r.week_key, day: r.day, shiftKey: r.shift_type,
+      label: shiftConfig[r.shift_type].label, bartender: r.bartender || '?'
+    }));
+  }catch(e){ return []; }
+}
+
+// Load PINs once at startup; individual weeks load on demand (login, week switch).
+loadPinsFromSupabase();
+try{
+  const savedTheme = localStorage.getItem('barTheme');
+  if(savedTheme) applyTheme(savedTheme);
+}catch(e){ /* ignore */ }
 
 // ---------- Login ----------
 const loginScreen = document.getElementById('loginScreen');
@@ -2545,19 +2648,30 @@ function refreshBarmaidNameVisibility(){
 roleSelect.addEventListener('change', refreshBarmaidNameVisibility);
 refreshBarmaidNameVisibility();
 
-function attemptLogin(){
+function currentActiveShiftTab(){
+  const hour = new Date().getHours();
+  // Day 11h00-19h00, Night 19h00-03h00
+  if(hour >= 19 || hour < 3) return 'bartNight';
+  return 'bartDay';
+}
+
+async function attemptLogin(){
   const role = roleSelect.value;
   const pin = pinInput.value;
   if(pin === rolePins[role]){
     state.role = role;
     state.loggedInName = (role === 'barmaid') ? barmaidNameSelect.value : null;
-    state.tab = roleTabs[role][0];
+    state.tab = (role === 'barmaid') ? currentActiveShiftTab() : roleTabs[role][0];
     state.subView = null; state.pdfView = null;
     loginError.textContent = '';
     pinInput.value = '';
     loginScreen.style.display = 'none';
     appShell.style.display = 'block';
-    renderDayButtons(); renderTabs(); renderPanel();
+    renderDayButtons(); renderTabs();
+    fileStatusEl.textContent = 'Chargement...';
+    await loadWeekFromSupabase(state.week);
+    renderPanel();
+    if(state.role === 'boss') refreshNotifications();
   } else {
     loginError.textContent = 'NIP incorrect pour ce rôle.';
   }
@@ -2569,6 +2683,54 @@ logoutBtn.addEventListener('click', ()=>{
   appShell.style.display = 'none';
   loginScreen.style.display = 'flex';
   pinInput.value = ''; loginError.textContent = '';
+});
+
+// ---------- Notifications (boss only) ----------
+const notifBtn = document.getElementById('notifBtn');
+const notifDropdown = document.getElementById('notifDropdown');
+let pendingReviews = [];
+
+async function refreshNotifications(){
+  if(state.role !== 'boss'){ notifBtn.style.display = 'none'; return; }
+  pendingReviews = await findPendingReviewsLive();
+  if(pendingReviews.length > 0){
+    notifBtn.style.display = 'block';
+    notifBtn.textContent = `🔔 ${pendingReviews.length} à réviser`;
+  } else {
+    notifBtn.style.display = 'none';
+    notifDropdown.style.display = 'none';
+  }
+}
+notifBtn.addEventListener('click', ()=>{
+  if(notifDropdown.style.display === 'block'){
+    notifDropdown.style.display = 'none';
+    return;
+  }
+  notifDropdown.innerHTML = '';
+  if(pendingReviews.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'notif-empty';
+    empty.textContent = 'Rien à réviser.';
+    notifDropdown.appendChild(empty);
+  } else {
+    pendingReviews.forEach(item=>{
+      const el = document.createElement('div');
+      el.className = 'notif-item';
+      el.innerHTML = `<div class="notif-who">${item.bartender}</div><div class="notif-when">${item.day} — ${item.label} — semaine du ${item.weekK}</div>`;
+      el.addEventListener('click', async ()=>{
+        notifDropdown.style.display = 'none';
+        state.week = item.weekK; state.day = item.day; state.tab = item.shiftKey;
+        state.subView = null; state.pdfView = null;
+        weekSelect.value = item.weekK;
+        renderDayButtons(); renderTabs();
+        fileStatusEl.textContent = 'Chargement...';
+        await loadWeekFromSupabase(item.weekK);
+        renderPanel();
+      });
+      notifDropdown.appendChild(el);
+    });
+  }
+  notifDropdown.style.display = 'block';
 });
 
 // ---------- Préférences ----------
@@ -2583,7 +2745,7 @@ const themeGrid = document.getElementById('themeGrid');
 
 function renderThemeGrid(){
   themeGrid.innerHTML = '';
-  const current = data.settings?.theme || 'jour';
+  const current = (function(){ try{ return localStorage.getItem('barTheme') || 'jour'; }catch(e){ return 'jour'; } })();
   themes.forEach(t=>{
     const btn = document.createElement('div');
     btn.className = 'theme-swatch' + (t.id===current ? ' active' : '');
@@ -2600,7 +2762,7 @@ prefsBtn.addEventListener('click', ()=>{
   prefsModal.style.display = 'flex';
 });
 closePrefsBtn.addEventListener('click', ()=>{ prefsModal.style.display = 'none'; });
-savePinBtn.addEventListener('click', ()=>{
+savePinBtn.addEventListener('click', async ()=>{
   const val = newPinInput.value.trim();
   if(!/^\d{4,6}$/.test(val)){
     pinSaveMsg.style.color = '#B0402A';
@@ -2608,11 +2770,14 @@ savePinBtn.addEventListener('click', ()=>{
     return;
   }
   rolePins[state.role] = val;
-  if(!data.settings) data.settings = {};
-  if(!data.settings.pins) data.settings.pins = {};
-  data.settings.pins[state.role] = val;
-  pinSaveMsg.style.color = 'var(--ok)';
-  pinSaveMsg.textContent = 'NIP mis à jour — pense à cliquer Enregistrer sur un formulaire pour le sauvegarder dans le fichier.';
+  try{
+    await savePinToSupabase(state.role, val);
+    pinSaveMsg.style.color = 'var(--ok)';
+    pinSaveMsg.textContent = 'NIP mis à jour.';
+  }catch(e){
+    pinSaveMsg.style.color = '#B0402A';
+    pinSaveMsg.textContent = "NIP changé pour cette session, mais l'enregistrement a échoué — réessaie.";
+  }
   newPinInput.value = '';
 });
 
