@@ -671,30 +671,26 @@ const pdfSheetList = [
 ];
 
 // Real staff schedule (A/B rotation), supplied by user.
-const staffSchedule = {
-  "A": {
-    "Monday":    { "Day":"Val",      "Night":"Tanya" },
-    "Tuesday":   { "Day":"Val",      "Night":"Steph" },
-    "Wednesday": { "Day":"Claudine", "Night":"Jen" },
-    "Thursday":  { "Day":"Steph",    "Night":"Tanya" },
-    "Friday":    { "Day":"Jen",      "Night":"Steph" },
-    "Saturday":  { "Day":"Tanya",    "Night":"Maude" },
-    "Sunday":    { "Day":"Steph",    "Night":"Jen" }
-  },
-  "B": {
-    "Monday":    { "Day":"Val",      "Night":"Tanya" },
-    "Tuesday":   { "Day":"Val",      "Night":"Steph" },
-    "Wednesday": { "Day":"Claudine", "Night":"Jen" },
-    "Thursday":  { "Day":"Steph",    "Night":"Tanya" },
-    "Friday":    { "Day":"Jen",      "Night":"Steph" },
-    "Saturday":  { "Day":"Tanya",    "Night":"Steph" },
-    "Sunday":    { "Day":"Tanya",    "Night":"Jen" }
-  }
-};
+// Schedule now lives in Supabase's `schedule` table (single source of truth,
+// shared with the ask-ai Edge Function) — loaded once at startup, after the
+// Supabase client itself is ready (see loadScheduleFromSupabase() call below).
+let staffSchedule = { A:{}, B:{} };
 const dayNameToEn = {Lundi:"Monday", Mardi:"Tuesday", Mercredi:"Wednesday", Jeudi:"Thursday", Vendredi:"Friday", Samedi:"Saturday", Dimanche:"Sunday"};
-const bartenders = [...new Set(
-  Object.values(staffSchedule).flatMap(week => Object.values(week).flatMap(day => Object.values(day)))
-)].sort();
+const bartenders = ["Claudine","Jen","Maude","Steph","Tanya","Val"];
+
+async function loadScheduleFromSupabase(){
+  try{
+    const { data, error } = await sb.from('schedule').select('*');
+    if(error) throw error;
+    const loaded = { A:{}, B:{} };
+    (data||[]).forEach(row=>{
+      const enDay = row.day;
+      if(!loaded[row.parity][enDay]) loaded[row.parity][enDay] = {};
+      loaded[row.parity][enDay][row.shift_type] = row.bartender;
+    });
+    staffSchedule = loaded;
+  }catch(e){ /* keep the empty fallback; defaultBartender() handles it gracefully */ }
+}
 
 // Which real calendar weeks are "A" vs "B" is not yet confirmed — placeholder anchor below.
 // EDIT ref date once the owner confirms which actual week is an A week.
@@ -2660,8 +2656,9 @@ async function findPendingReviewsLive(){
   }catch(e){ return []; }
 }
 
-// Load PINs once at startup; individual weeks load on demand (login, week switch).
+// Load PINs and the staff schedule once at startup; individual weeks load on demand (login, week switch).
 loadPinsFromSupabase();
+loadScheduleFromSupabase();
 try{
   const savedTheme = localStorage.getItem('barTheme');
   if(savedTheme) applyTheme(savedTheme);
