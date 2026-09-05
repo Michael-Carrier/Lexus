@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.2</title>
+<title>Registre du bar v2.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -201,6 +201,14 @@
     color:#8A2E1E !important;
     font-weight:600;
   }
+  .stock-align-table th, .stock-align-table td{
+    height:38px;
+    box-sizing:border-box;
+    white-space:nowrap;
+    vertical-align:middle;
+  }
+  .stock-align-table input.num{ height:26px; box-sizing:border-box; }
+  .stock-align-table tr.spacer td{ height:11px; }
 
   .bottom-bar{
     display:flex;
@@ -578,7 +586,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.0</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.1</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -2366,13 +2374,40 @@ function buildStockSection(shiftType, bucket){
   if(!store.stock) store.stock = {};
 
   const isDay = shiftType === 'bartDay';
+  const prevRef = isDay ? previousDayRef(state.week, state.day) : null;
 
   const section = document.createElement('div');
   section.style.marginTop = '28px';
+
+  const headingRow = document.createElement('div');
+  headingRow.className = 'no-print';
+  headingRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
+  const leftNavBtn = document.createElement('button');
+  leftNavBtn.className = 'print-btn';
+  leftNavBtn.textContent = isDay ? "← Inventaire d'hier" : "← Quart de Jour";
+  leftNavBtn.addEventListener('click', ()=>{
+    if(isDay){
+      state.week = prevRef.weekKey; state.day = prevRef.day; state.tab = 'inventaire';
+      weekSelect.value = prevRef.weekKey;
+      renderDayButtons(); renderTabs();
+      loadWeekFromSupabase(prevRef.weekKey).then(renderPanel);
+    } else {
+      state.tab = 'bartDay'; renderTabs(); renderPanel();
+    }
+  });
   const h = document.createElement('h2');
   h.textContent = 'Stock du quart';
-  h.style.fontSize = '1.1rem';
-  section.appendChild(h);
+  h.style.cssText = 'font-size:1.1rem; margin:0;';
+  const rightNavBtn = document.createElement('button');
+  rightNavBtn.className = 'print-btn';
+  rightNavBtn.textContent = isDay ? "Quart de Soir →" : "Inventaire →";
+  rightNavBtn.addEventListener('click', ()=>{
+    state.tab = isDay ? 'bartNight' : 'inventaire';
+    renderTabs(); renderPanel();
+  });
+  headingRow.appendChild(leftNavBtn); headingRow.appendChild(h); headingRow.appendChild(rightNavBtn);
+  section.appendChild(headingRow);
+
   const sub = document.createElement('div');
   sub.className = 'sub';
   sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
@@ -2383,7 +2418,6 @@ function buildStockSection(shiftType, bucket){
   function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); }
 
   let yesterdayInventaire = null; // only fetched for the Day shift (may cross into last week)
-  const prevRef = isDay ? previousDayRef(state.week, state.day) : null;
 
   const leftVals = {}, rightVals = {}, rowStores = {}, debutInputs = {}, leftCellEls = {}, rightCellEls = {};
 
@@ -2416,22 +2450,24 @@ function buildStockSection(shiftType, bucket){
   }
 
   // Three separate tables, side by side — left preview / main form / right preview.
+  // Shared "stock-align-table" class forces identical row heights across all three,
+  // since separate <table> elements don't auto-align rows the way one table's would.
   const flexWrap = document.createElement('div');
   flexWrap.style.cssText = 'display:flex; gap:10px; align-items:flex-start; overflow-x:auto;';
 
-  const leftTable = document.createElement('table'); leftTable.className = 'form-table';
-  leftTable.style.cssText = 'flex:0 0 130px; background:#EDEAE2;';
-  leftTable.innerHTML = `<thead><tr><th>${isDay ? "Hier — Inventaire" : "Jour — Total"}</th></tr></thead>`;
+  const leftTable = document.createElement('table'); leftTable.className = 'form-table stock-align-table';
+  leftTable.style.cssText = 'flex:0 0 90px; background:#EDEAE2;';
+  leftTable.innerHTML = `<thead><tr><th title="${isDay ? "Hier — Inventaire (Nouveau total)" : "Aujourd'hui — Jour (Total)"}">${isDay ? "Hier" : "Jour"}</th></tr></thead>`;
   const leftBody = document.createElement('tbody'); leftTable.appendChild(leftBody);
 
-  const mainTable = document.createElement('table'); mainTable.className = 'form-table';
+  const mainTable = document.createElement('table'); mainTable.className = 'form-table stock-align-table';
   mainTable.style.flex = '1 1 auto';
   mainTable.innerHTML = `<thead><tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
   const mainBody = document.createElement('tbody'); mainTable.appendChild(mainBody);
 
-  const rightTable = document.createElement('table'); rightTable.className = 'form-table';
-  rightTable.style.cssText = 'flex:0 0 130px; background:#EDEAE2;';
-  rightTable.innerHTML = `<thead><tr><th>${isDay ? "Soir — Début" : "Inventaire — Total"}</th></tr></thead>`;
+  const rightTable = document.createElement('table'); rightTable.className = 'form-table stock-align-table';
+  rightTable.style.cssText = 'flex:0 0 90px; background:#EDEAE2;';
+  rightTable.innerHTML = `<thead><tr><th title="${isDay ? "Aujourd'hui — Soir (Début)" : "Aujourd'hui — Inventaire (Nouveau total)"}">${isDay ? "Soir" : "Inv."}</th></tr></thead>`;
   const rightBody = document.createElement('tbody'); rightTable.appendChild(rightBody);
 
   inventaireItems.forEach((item, idx)=>{
@@ -2522,31 +2558,6 @@ function buildStockSection(shiftType, bucket){
     Object.keys(leftCellEls).forEach(refreshRow);
   }
 
-  const navRow = document.createElement('div');
-  navRow.className = 'shift-row no-print'; navRow.style.marginTop='10px';
-  const leftNavBtn = document.createElement('button');
-  leftNavBtn.className = 'print-btn';
-  leftNavBtn.textContent = isDay ? "← Aller à l'Inventaire d'hier" : "← Aller au quart de Jour";
-  leftNavBtn.addEventListener('click', ()=>{
-    if(isDay){
-      state.week = prevRef.weekKey; state.day = prevRef.day; state.tab = 'inventaire';
-      weekSelect.value = prevRef.weekKey;
-      renderDayButtons(); renderTabs();
-      loadWeekFromSupabase(prevRef.weekKey).then(renderPanel);
-    } else {
-      state.tab = 'bartDay'; renderTabs(); renderPanel();
-    }
-  });
-  const rightNavBtn = document.createElement('button');
-  rightNavBtn.className = 'print-btn';
-  rightNavBtn.textContent = isDay ? "Aller au quart de Soir →" : "Aller à l'Inventaire →";
-  rightNavBtn.addEventListener('click', ()=>{
-    state.tab = isDay ? 'bartNight' : 'inventaire';
-    renderTabs(); renderPanel();
-  });
-  navRow.appendChild(leftNavBtn); navRow.appendChild(rightNavBtn);
-  section.appendChild(navRow);
-
   return section;
 }
 
@@ -2604,10 +2615,27 @@ function buildInventairePanel(){
   const store = bucket.inventaire;
 
   const wrap = document.createElement('div');
-  wrap.innerHTML = `
-    <h2>Inventaire Journalier</h2>
-    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.</div>
-  `;
+  const headingRow = document.createElement('div');
+  headingRow.className = 'no-print';
+  headingRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
+  const leftNavBtn = document.createElement('button');
+  leftNavBtn.className = 'print-btn';
+  leftNavBtn.textContent = "← Quart de Soir";
+  leftNavBtn.addEventListener('click', ()=>{ state.tab = 'bartNight'; renderTabs(); renderPanel(); });
+  const h2el = document.createElement('h2');
+  h2el.textContent = 'Inventaire Journalier';
+  h2el.style.margin = '0';
+  const rightNavBtn = document.createElement('button');
+  rightNavBtn.className = 'print-btn';
+  rightNavBtn.textContent = "Jour de demain →";
+  headingRow.appendChild(leftNavBtn); headingRow.appendChild(h2el); headingRow.appendChild(rightNavBtn);
+  wrap.appendChild(headingRow);
+
+  const subDiv = document.createElement('div');
+  subDiv.className = 'sub';
+  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.`;
+  wrap.appendChild(subDiv);
+
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
@@ -2689,15 +2717,6 @@ function buildInventairePanel(){
     }
   });
 
-  const navRow = document.createElement('div');
-  navRow.className = 'shift-row no-print'; navRow.style.marginTop='10px';
-  const leftNavBtn = document.createElement('button');
-  leftNavBtn.className = 'print-btn';
-  leftNavBtn.textContent = "← Aller au quart de Soir";
-  leftNavBtn.addEventListener('click', ()=>{ state.tab = 'bartNight'; renderTabs(); renderPanel(); });
-  const rightNavBtn = document.createElement('button');
-  rightNavBtn.className = 'print-btn';
-  rightNavBtn.textContent = "Aller au Jour de demain →";
   rightNavBtn.addEventListener('click', async ()=>{
     if(!nextRef.sameWeek){ weekSelect.value = nextRef.weekKey; state.week = nextRef.weekKey; }
     state.day = nextRef.day; state.tab = 'bartDay';
@@ -2706,8 +2725,6 @@ function buildInventairePanel(){
     if(!nextRef.sameWeek) await loadWeekFromSupabase(state.week);
     renderPanel();
   });
-  navRow.appendChild(leftNavBtn); navRow.appendChild(rightNavBtn);
-  wrap.appendChild(navRow);
 
   // Vendu = Hier (total confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté (janitor).
   // Se corrige tout seul même si le compte d'hier était lui-même décalé — on ne se fie qu'aux
