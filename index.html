@@ -1101,18 +1101,19 @@ function buildAccountantSheet(){
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid compact-print';
-  function cell(row, col, text, cls){
+  function cell(row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row; d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     grid.appendChild(d);
   }
   // cols: D=1(label) E=2(value) F=3(description) — compact, matches D/E/F of your file
 
   function row(r, label, value, desc, cls){
     cell(r,1,label,'pg-label');
-    cell(r,2, value, cls);
+    cell(r,2, value, cls, desc);
     cell(r,3,desc,'pg-label');
   }
 
@@ -1243,11 +1244,12 @@ function buildInventorySheet(){
     g.className = 'poker-grid inventory-print';
     return g;
   }
-  function cellIn(g, row, col, text, cls){
+  function cellIn(g, row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row; d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     g.appendChild(d);
   }
 
@@ -1326,12 +1328,13 @@ function buildOverallSheet(){
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
-  function cell(row, col, text, cls){
+  function cell(row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row;
     d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     grid.appendChild(d);
   }
   // cols: A=1 B=2 C=3(Vente/Semaine) D=4(Tot TX) E=5(Heures) ... G=7 H=8
@@ -1387,93 +1390,93 @@ function buildOverallSheet(){
   const pinutsKnown = sun.pinutsTbxl !== "" && sun.pinutsTbxl !== undefined;
   const paieJaboinKnown = sun.paieJaboin !== "" && sun.paieJaboin !== undefined;
 
-  function unk(row, col, label){
+  function unk(row, col, label, why){
     cell(row, col, label, 'pg-label');
-    cell(row, col+1, '?', 'pg-unknown');
+    cell(row, col+1, '?', 'pg-unknown', why || 'Aucune source de données définie pour ce champ.');
   }
-  function known(row, col, label, value){
+  function known(row, col, label, value, tooltip){
     cell(row, col, label, 'pg-label');
-    if(value===null) cell(row, col+1, '?', 'pg-unknown');
-    else cell(row, col+1, value, 'pg-calc');
+    if(value===null) cell(row, col+1, '?', 'pg-unknown', tooltip || 'Encore inconnu — dépend d\'une autre valeur non résolue.');
+    else cell(row, col+1, value, 'pg-calc', tooltip);
   }
 
   // Top-right "Caisses" block — Caisses repeats block 1; Poker repeats block 2's Poker; Pool/Pinuts from #3 (Sunday);
   // Paie Jaboin defaults to -350 (editable on Sunday); Taxes repeats block 1's Taxes; Total sums all 6 rows.
   cell(2,7,'Caisses','pg-header');
-  cell(2,8, block1Caisses, 'pg-calc'); // the header row itself also holds the Caisses value, per the real file
-  known(3,7,'Poker', block2Poker);
-  known(4,7,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null);
-  known(5,7,'Pinut', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null);
-  known(6,7,'Paie Jaboin', paieJaboinKnown ? round2(Number(sun.paieJaboin)) : null);
-  known(7,7,'Taxes', block1Taxes);
+  cell(2,8, block1Caisses, 'pg-calc', 'Caisses de la semaine — Jour + Nuit de tous les quarts (répète le bloc du bas à gauche).'); // the header row itself also holds the Caisses value, per the real file
+  known(3,7,'Poker', block2Poker, 'Total inséré (poker) moins Total coupons/gains de la semaine — même valeur que le "Poker" du bloc du bas à gauche.');
+  known(4,7,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null, 'Pool → TXBL, saisi dans l\'onglet Misc., section Pool.');
+  known(5,7,'Pinut', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null, 'Pinuts → TXBL, saisi dans l\'onglet Misc.');
+  known(6,7,'Paie Jaboin', paieJaboinKnown ? round2(Number(sun.paieJaboin)) : null, 'Valeur par défaut -350, éditable dans l\'onglet Misc., Section 2.');
+  known(7,7,'Taxes', block1Taxes, 'TPS + TVQ de tous les quarts de la semaine — même valeur que "Taxes" du bloc du haut à gauche.');
   const topRightKnown = poolKnown && pinutsKnown && paieJaboinKnown;
   const topRightTotal = topRightKnown ? round2(
     block1Caisses + block2Poker + Number(sun.poolTbxl) + Number(sun.pinutsTbxl) + Number(sun.paieJaboin) + block1Taxes
   ) : null;
-  known(9,7,'Total', topRightTotal);
+  known(9,7,'Total', topRightTotal, 'Somme des 6 lignes ci-dessus : Caisses + Poker + Pool + Pinut + Paie Jaboin + Taxes.');
 
-  known(12,1,'Caisses', block1Caisses);
-  known(13,1,'Over', block1Over);
-  known(14,1,'Taxes', block1Taxes);
-  known(15,1,'Interac', block1Interac);
+  known(12,1,'Caisses', block1Caisses, 'Jour + Nuit de tous les quarts de la semaine (Bartend. Jour/Soir).');
+  known(13,1,'Over', block1Over, 'Over de tous les quarts + Fact. Over (onglet Misc., Section 1).');
+  known(14,1,'Taxes', block1Taxes, 'TPS + TVQ (Cash + Interac) de tous les quarts de la semaine.');
+  known(15,1,'Interac', block1Interac, 'Total Interac de tous les quarts de la semaine.');
 
   // Middle-right block: Reste = the top-right block's Total, minus everything above it here.
   const facturesKnown = sun.factures !== "" && sun.factures !== undefined;
   const guichCaissesKnown = sun.guichCaisses !== "" && sun.guichCaisses !== undefined;
   const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
-  known(12,5,'Facture', facturesKnown ? round2(Number(sun.factures)) : null);
-  known(13,5,'Interac', block1Interac);
-  known(14,5,'Guich Pok', round2(pk.guichet));
-  known(15,5,'Guich Caiss', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : null);
-  known(16,5,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : null);
-  known(17,5,'Coup/Valid', round2(pk.machine));
+  known(12,5,'Facture', facturesKnown ? round2(Number(sun.factures)) : null, 'Saisi dans l\'onglet Misc., Section 1 (Factures).');
+  known(13,5,'Interac', block1Interac, 'Même valeur que "Interac" du bloc du haut à gauche.');
+  known(14,5,'Guich Pok', round2(pk.guichet), 'Guichet — somme de la semaine, depuis l\'onglet Poker (#1 Poker/Lotto Summary).');
+  known(15,5,'Guich Caiss', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
+  known(16,5,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : null, 'Saisi dans l\'onglet Misc., Section 2 — distinct du Depot de l\'onglet Poker.');
+  known(17,5,'Coup/Valid', round2(pk.machine), 'Machine — tickets trouvés dans les machines, somme de la semaine (onglet Poker).');
   const resteKnown = topRightKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
   const resteValue = resteKnown ? round2(
     topRightTotal - Number(sun.factures) - block1Interac - pk.guichet - Number(sun.guichCaisses) - Number(sun.depotOverall) - pk.machine
   ) : null;
-  known(19,5,'Reste', resteValue);
+  known(19,5,'Reste', resteValue, 'Total (bloc du haut à droite) moins Facture, Interac, Guich Pok, Guich Caiss, Depot et Coup/Valid.');
 
   // Block 2 (lower-left): Caisses/Over Caisses repeat block 1; Poker/Over Poker from #1; Bouteilles/Autres from Sunday; Over Pool pinned.
   const bouteillesKnown = sun.bouteilles !== "" && sun.bouteilles !== undefined;
   const autresKnown = sun.autres !== "" && sun.autres !== undefined;
 
-  known(19,1,'Caisses', block1Caisses);
-  known(20,1,'Over Caisses', block1Over);
-  known(21,1,'Poker', block2Poker);
-  known(22,1,'Over Poker', pk.overPoker);
-  known(23,1,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null);
-  known(24,1,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null);
+  known(19,1,'Caisses', block1Caisses, 'Répète le Caisses du bloc du haut.');
+  known(20,1,'Over Caisses', block1Over, 'Répète le Over du bloc du haut.');
+  known(21,1,'Poker', block2Poker, 'Total inséré moins Total coupons/gains (onglet Poker) — la semaine entière.');
+  known(22,1,'Over Poker', pk.overPoker, 'Over poker (D17) de la feuille #1 Poker/Lotto Summary.');
+  known(23,1,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
+  known(24,1,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null, 'Pool → TXBL (onglet Misc.).');
   const poolOverKnown = sun.poolOver !== "" && sun.poolOver !== undefined;
-  known(25,1,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null);
-  known(26,1,'Pinuts', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null);
-  known(27,1,'Autres', autresKnown ? round2(Number(sun.autres)) : null);
+  known(25,1,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null, 'Pool → Over (onglet Misc., sous-section Pool).');
+  known(26,1,'Pinuts', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null, 'Pinuts → TXBL (onglet Misc.).');
+  known(27,1,'Autres', autresKnown ? round2(Number(sun.autres)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
   const lowerLeftKnown = block1Over!==null && bouteillesKnown && poolKnown && poolOverKnown && pinutsKnown && autresKnown;
   const lowerLeftTotal = lowerLeftKnown ? round2(
     block1Caisses + block1Over + block2Poker + pk.overPoker +
     Number(sun.bouteilles) + Number(sun.poolTbxl) + Number(sun.poolOver) +
     Number(sun.pinutsTbxl) + Number(sun.autres)
   ) : null;
-  known(29,1,'Total', lowerLeftTotal);
+  known(29,1,'Total', lowerLeftTotal, 'Somme des 9 lignes ci-dessus : Caisses + Over Caisses + Poker + Over Poker + Bouteilles + Pool + Over Pool + Pinuts + Autres.');
 
   // Lower-right block: Over Poker/Over Caisses repeat other cells; Bouteilles reuses the same Sunday field;
   // Over Pool now comes from Sunday's new Pool section; Env from #3's Sunday-sourced ENV; Paye Dan new field.
   const envKnown = sun.env !== "" && sun.env !== undefined;
   const payeDanKnown = sun.payeDan !== "" && sun.payeDan !== undefined;
 
-  known(19,7,'Over Poker', pk.overPoker);
-  known(20,7,'Over Caisses', block1Over);
-  known(21,7,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null);
-  known(22,7,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null);
-  known(23,7,'Reste Env', envKnown ? round2(Number(sun.env)) : null);
+  known(19,7,'Over Poker', pk.overPoker, 'Répète le Over Poker du bloc du bas à gauche (D17 de #1 Poker/Lotto Summary).');
+  known(20,7,'Over Caisses', block1Over, 'Répète le Over du bloc du haut.');
+  known(21,7,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Même champ que Bouteilles du bloc du bas à gauche (onglet Misc.).');
+  known(22,7,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null, 'Pool → Over (onglet Misc.).');
+  known(23,7,'Reste Env', envKnown ? round2(Number(sun.env)) : null, 'ENV, saisi dans l\'onglet Misc., Section 1.');
   const lowerRightTotKnown = poolOverKnown && bouteillesKnown && envKnown;
   const lowerRightTot = lowerRightTotKnown ? round2(
     pk.overPoker + block1Over + Number(sun.bouteilles) + Number(sun.poolOver) + Number(sun.env)
   ) : null;
-  known(25,7,'Tot', lowerRightTot);
-  known(26,7,'Paye Dan', payeDanKnown ? round2(Number(sun.payeDan)) : null);
+  known(25,7,'Tot', lowerRightTot, 'Somme : Over Poker + Over Caisses + Bouteilles + Over Pool + Reste Env.');
+  known(26,7,'Paye Dan', payeDanKnown ? round2(Number(sun.payeDan)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
   const lowerRightReste = (lowerRightTot!==null && payeDanKnown) ? round2(lowerRightTot - Number(sun.payeDan)) : null;
-  known(28,7,'Reste', lowerRightReste);
-  known(29,7,'Total', lowerRightReste); // the "+R15" term dropped — see the flag note
+  known(28,7,'Reste', lowerRightReste, 'Tot (ci-dessus) moins Paye Dan.');
+  known(29,7,'Total', lowerRightReste, 'Même valeur que Reste — un terme du fichier original pointait vers une cellule vide et a été retiré.'); // the "+R15" term dropped — see the flag note
 
   wrap.appendChild(grid);
   const flagNote = document.createElement('div');
@@ -1513,12 +1516,13 @@ function buildTransactionSheet(){
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
-  function cell(row, col, text, cls){
+  function cell(row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row;
     d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     grid.appendChild(d);
   }
   // cols: A=1 B=2(Jour) C=3(Soir) D=4(Over) E=5(TPS) F=6(TVQ) G=7(Interac) H=8(Argent) I=9 J=10
@@ -1663,12 +1667,13 @@ function buildShiftSummarySheet(){
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
-  function cell(row, col, text, cls){
+  function cell(row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row;
     d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     grid.appendChild(d);
   }
 
@@ -1825,12 +1830,13 @@ function buildPokerSheet(){
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
 
-  function cell(row, col, text, cls){
+  function cell(row, col, text, cls, tooltip){
     const d = document.createElement('div');
     d.className = 'pg-cell' + (cls ? ' '+cls : '');
     d.style.gridRow = row;
     d.style.gridColumn = col;
     d.textContent = text;
+    if(tooltip) d.title = tooltip;
     grid.appendChild(d);
   }
   // col letters: A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8 I=9 J=10 K=11
@@ -1839,36 +1845,36 @@ function buildPokerSheet(){
 
   cell(3,2,'Total','pg-header'); cell(3,5,'Tot inséré','pg-header');
   cell(3,6,'Total','pg-header'); cell(3,7,'net','pg-header'); cell(3,9,'Total','pg-header');
-  cell(3,10, J3, 'pg-calc');
+  cell(3,10, J3, 'pg-calc', 'Même valeur que Total (B17) — Coupons/Gains + Argent + Machine + Guichet.');
 
   dayData.forEach((r,i)=>{
     const row = 4+i;
     cell(row,1,r.day,'pg-day');
-    cell(row,2,r.win,'pg-calc');
+    cell(row,2,r.win,'pg-calc', 'Coupons/Win de la journée — onglet Poker.');
     cell(row,5,r.day,'pg-label');
-    cell(row,6,r.inserted,'pg-calc');
-    cell(row,7,r.net,'pg-calc');
+    cell(row,6,r.inserted,'pg-calc', 'Total inséré de la journée — onglet Poker.');
+    cell(row,7,r.net,'pg-calc', 'Net = Inséré − Coupons/Win, pour cette journée.');
   });
-  cell(5,8,'-','pg-label'); cell(5,9,'Coupons','pg-label'); cell(5,10,J5,'pg-calc');
-  cell(6,8,'=','pg-label'); cell(6,9,'Depot','pg-label'); cell(6,10,J6, wk.depotKnown?'pg-calc':'pg-unknown');
-  cell(8,9,'Reste','pg-label'); cell(8,10,J8, wk.reste===null?'pg-unknown':'pg-calc');
-  cell(10,9,'Over','pg-label'); cell(10,10,J10,'pg-calc');
+  cell(5,8,'-','pg-label'); cell(5,9,'Coupons','pg-label'); cell(5,10,J5,'pg-calc', 'Total Coupons/Win de la semaine (B12).');
+  cell(6,8,'=','pg-label'); cell(6,9,'Depot','pg-label'); cell(6,10,J6, wk.depotKnown?'pg-calc':'pg-unknown', 'Saisi manuellement sur l\'onglet Poker, une fois par semaine.');
+  cell(8,9,'Reste','pg-label'); cell(8,10,J8, wk.reste===null?'pg-unknown':'pg-calc', 'Total (B17) moins Coupons/Win (B12) moins Depot.');
+  cell(10,9,'Over','pg-label'); cell(10,10,J10,'pg-calc', 'Over poker (D17) = Total (B17) moins Total inséré (F12).');
 
-  cell(12,1,'Total','pg-label'); cell(12,2,B12,'pg-calc');
-  cell(12,5,'Total','pg-label'); cell(12,6,F12,'pg-calc'); cell(12,7,G12,'pg-calc');
-  cell(12,9,'Depart','pg-label'); cell(12,10,J12, wk.depart===null?'pg-unknown':'pg-calc');
+  cell(12,1,'Total','pg-label'); cell(12,2,B12,'pg-calc', 'Somme des Coupons/Win des 7 jours de la semaine.');
+  cell(12,5,'Total','pg-label'); cell(12,6,F12,'pg-calc', 'Somme des montants Insérés des 7 jours.'); cell(12,7,G12,'pg-calc', 'Somme des Net (Inséré − Win) des 7 jours.');
+  cell(12,9,'Depart','pg-label'); cell(12,10,J12, wk.depart===null?'pg-unknown':'pg-calc', 'Reste + Over — devient le "Depart: Over from Cash" de la semaine prochaine.');
 
-  cell(14,1,'Argent','pg-label'); cell(14,2,B14,'pg-calc');
-  cell(14,9,'Total','pg-label'); cell(14,10,J14,'pg-calc'); cell(14,11,'total net','pg-label');
+  cell(14,1,'Argent','pg-label'); cell(14,2,B14,'pg-calc', 'Cash dans la caisse (distinct du guichet) — somme de la semaine, onglet Poker.');
+  cell(14,9,'Total','pg-label'); cell(14,10,J14,'pg-calc', 'Net total de la semaine (G12).'); cell(14,11,'total net','pg-label');
 
-  cell(15,1,'machine','pg-label'); cell(15,2,B15,'pg-calc');
-  cell(15,9,'LottoQ','pg-label'); cell(15,10,J15,'pg-calc'); cell(15,11,'0.8','pg-label');
+  cell(15,1,'machine','pg-label'); cell(15,2,B15,'pg-calc', 'Tickets trouvés dans les machines — somme de la semaine, onglet Poker.');
+  cell(15,9,'LottoQ','pg-label'); cell(15,10,J15,'pg-calc', 'Net total de la semaine × 0.8.'); cell(15,11,'0.8','pg-label');
 
-  cell(16,1,'Guichet','pg-label'); cell(16,2,B16,'pg-calc');
-  cell(16,9,'Club','pg-label'); cell(16,10,J16,'pg-calc'); cell(16,11,'0.2','pg-label');
+  cell(16,1,'Guichet','pg-label'); cell(16,2,B16,'pg-calc', 'Argent déposé au guichet — somme de la semaine, onglet Poker.');
+  cell(16,9,'Club','pg-label'); cell(16,10,J16,'pg-calc', 'Net total de la semaine × 0.2.'); cell(16,11,'0.2','pg-label');
 
-  cell(17,1,'Total','pg-label'); cell(17,2,B17,'pg-calc');
-  cell(17,3,'over poker','pg-label'); cell(17,4,D17,'pg-calc');
+  cell(17,1,'Total','pg-label'); cell(17,2,B17,'pg-calc', 'Coupons/Win + Argent + Machine + Guichet — total de la semaine.');
+  cell(17,3,'over poker','pg-label'); cell(17,4,D17,'pg-calc', 'Total (B17) moins Total inséré (F12) de la semaine.');
 
   wrap.appendChild(grid);
   wrap.appendChild(buildBottomBar());
@@ -2477,14 +2483,13 @@ function buildInventairePanel(){
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Confirmé (fin de semaine)</th>
+    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
-  const confirmedCells = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="5"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="4"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
     if(!store[key]) store[key] = { added:"", total:"" };
 
@@ -2498,21 +2503,14 @@ function buildInventairePanel(){
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = store[key].total;
+    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; });
     tdTotal.appendChild(inTotal);
 
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
     tdExp.textContent = item.expected;
 
-    // Confirmé column — mirrors Nouveau total live, read-only. Only meaningful once
-    // actually confirmed (Sunday), but always visible so it's clear what will be locked in.
-    const tdConfirmed = document.createElement('td');
-    tdConfirmed.className = 'expected-cell';
-    tdConfirmed.textContent = store[key].total;
-    confirmedCells[key] = tdConfirmed;
-    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; tdConfirmed.textContent = inTotal.value; });
-
-    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp); tr.appendChild(tdConfirmed);
+    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
