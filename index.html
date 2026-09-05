@@ -568,6 +568,8 @@
   </div>
   <button id="notifBtn" class="print-btn no-print" style="position:absolute; top:28px; right:24px; display:none;"></button>
   <div id="notifDropdown" style="display:none;"></div>
+  <button id="commentsBtn" class="print-btn no-print" style="position:absolute; top:28px; right:180px; display:none;"></button>
+  <div id="commentsDropdown" style="display:none;"></div>
 </header>
 
 <div id="askAiBox" class="no-print" style="display:none;">
@@ -658,6 +660,7 @@ const tabs = [
   {id:"delivery", label:"Beer Delivery", ready:true, restrictedTo:deliveryDays},
   {id:"misc", label:"Poker", ready:true},
   {id:"sunday", label:"Misc.", ready:true},
+  {id:"comments", label:"Commentaires", ready:true},
   {id:"pdfSheets", label:"Feuilles PDF", ready:true}
 ];
 
@@ -773,8 +776,8 @@ let state = {
 // (this is intentionally simple, per "we'll worry about protection later").
 const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
-  barmaid: ['bartDay','bartNight','stockDay','stockNight'],
-  janitor: ['inventaire'],
+  barmaid: ['bartDay','bartNight','stockDay','stockNight','comments'],
+  janitor: ['inventaire','comments'],
   boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
@@ -882,6 +885,8 @@ function renderPanel(){
     panel.appendChild(buildMiscPanel());
   } else if(tab.id === "sunday"){
     panel.appendChild(buildSundayPanel());
+  } else if(tab.id === "comments"){
+    panel.appendChild(buildCommentsPanel());
   } else if(tab.id === "pdfSheets"){
     panel.appendChild(buildPdfSheetsPanel());
   } else {
@@ -1855,6 +1860,85 @@ function buildPokerSheet(){
   return wrap;
 }
 
+function buildCommentsPanel(){
+  const wrap = document.createElement('div');
+  const senderName = state.role === 'barmaid' ? (state.loggedInName || 'Barmaid') : 'Janitor';
+  wrap.innerHTML = `
+    <h2>Commentaires</h2>
+    <div class="sub">Envoie une note au propriétaire — visible dans ses notifications, horodatée automatiquement.</div>
+  `;
+
+  const composeBox = document.createElement('div');
+  composeBox.style.cssText = 'margin:14px 0; font-family:"Avenir Next","Segoe UI",sans-serif;';
+  const textarea = document.createElement('textarea');
+  textarea.rows = 4;
+  textarea.placeholder = 'Écris ton commentaire ici...';
+  textarea.style.cssText = 'width:100%; padding:10px; font-family:inherit; font-size:0.9rem; border:1px solid var(--ink); background:var(--input-bg); resize:vertical;';
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'primary'; sendBtn.style.marginTop = '8px';
+  sendBtn.textContent = 'Envoyer';
+  const sendStatus = document.createElement('span');
+  sendStatus.className = 'status'; sendStatus.style.marginLeft = '10px';
+
+  sendBtn.addEventListener('click', async ()=>{
+    const message = textarea.value.trim();
+    if(!message) return;
+    sendBtn.disabled = true;
+    try{
+      const { error } = await sb.from('comments').insert({
+        sender_role: state.role, sender_name: senderName, message
+      });
+      if(error) throw error;
+      textarea.value = '';
+      sendStatus.textContent = 'Envoyé ✓';
+      loadRecentComments();
+    }catch(e){
+      sendStatus.textContent = 'Erreur — réessaie.';
+    }
+    sendBtn.disabled = false;
+  });
+
+  composeBox.appendChild(textarea);
+  composeBox.appendChild(sendBtn);
+  composeBox.appendChild(sendStatus);
+  wrap.appendChild(composeBox);
+
+  const listTitle = document.createElement('div');
+  listTitle.className = 'sub'; listTitle.style.marginTop = '20px'; listTitle.style.fontWeight = '600';
+  listTitle.textContent = 'Commentaires récents';
+  wrap.appendChild(listTitle);
+
+  const list = document.createElement('div');
+  list.id = 'commentsList';
+  list.style.marginTop = '10px';
+  wrap.appendChild(list);
+
+  async function loadRecentComments(){
+    list.innerHTML = '<div class="stub">Chargement...</div>';
+    try{
+      const { data, error } = await sb.from('comments').select('*').order('created_at', {ascending:false}).limit(20);
+      if(error) throw error;
+      list.innerHTML = '';
+      if(!data || data.length === 0){
+        list.innerHTML = '<div class="stub">Aucun commentaire pour l\'instant.</div>';
+        return;
+      }
+      data.forEach(c=>{
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:10px 0; border-bottom:1px solid var(--line); font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.85rem;';
+        const when = new Date(c.created_at).toLocaleString('fr-CA', {dateStyle:'short', timeStyle:'short'});
+        item.innerHTML = `<div style="font-weight:600;">${c.sender_name} <span style="font-weight:400; color:var(--ink-soft); font-size:0.78rem;">— ${when}</span></div><div style="margin-top:3px;">${c.message}</div>`;
+        list.appendChild(item);
+      });
+    }catch(e){
+      list.innerHTML = '<div class="stub">Erreur de chargement.</div>';
+    }
+  }
+  loadRecentComments();
+
+  return wrap;
+}
+
 function buildSundayPanel(){
   const store = weekBucket(state.week);
   const section1Flat = [ ['env','ENV'], ['factures','Factures'] ];
@@ -2711,7 +2795,7 @@ async function attemptLogin(){
     fileStatusEl.textContent = 'Chargement...';
     await loadWeekFromSupabase(state.week);
     renderPanel();
-    if(state.role === 'boss') refreshNotifications();
+    if(state.role === 'boss'){ refreshNotifications(); refreshComments(); }
   } else {
     loginError.textContent = 'NIP incorrect pour ce rôle.';
   }
@@ -2745,7 +2829,7 @@ async function refreshNotifications(){
 
 // Check for new pending reviews every 30 seconds while Boss is logged in and watching.
 setInterval(()=>{
-  if(state.role === 'boss') refreshNotifications();
+  if(state.role === 'boss'){ refreshNotifications(); refreshComments(); }
 }, 30000);
 
 notifBtn.addEventListener('click', ()=>{
@@ -2778,6 +2862,54 @@ notifBtn.addEventListener('click', ()=>{
     });
   }
   notifDropdown.style.display = 'block';
+});
+
+// ---------- Comments inbox (boss only) ----------
+const commentsBtn = document.getElementById('commentsBtn');
+const commentsDropdown = document.getElementById('commentsDropdown');
+let unreadComments = [];
+
+async function refreshComments(){
+  if(state.role !== 'boss'){ commentsBtn.style.display = 'none'; return; }
+  try{
+    const { data, error } = await sb.from('comments').select('*').eq('is_read', false).order('created_at', {ascending:false});
+    if(error) throw error;
+    unreadComments = data || [];
+    if(unreadComments.length > 0){
+      commentsBtn.style.display = 'block';
+      commentsBtn.textContent = `✉️ ${unreadComments.length} commentaire${unreadComments.length>1?'s':''}`;
+    } else {
+      commentsBtn.style.display = 'none';
+      commentsDropdown.style.display = 'none';
+    }
+  }catch(e){ /* silently retry next interval */ }
+}
+commentsBtn.addEventListener('click', ()=>{
+  if(commentsDropdown.style.display === 'block'){
+    commentsDropdown.style.display = 'none';
+    return;
+  }
+  commentsDropdown.innerHTML = '';
+  if(unreadComments.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'notif-empty';
+    empty.textContent = 'Rien de nouveau.';
+    commentsDropdown.appendChild(empty);
+  } else {
+    unreadComments.forEach(c=>{
+      const el = document.createElement('div');
+      el.className = 'notif-item';
+      const when = new Date(c.created_at).toLocaleString('fr-CA', {dateStyle:'short', timeStyle:'short'});
+      el.innerHTML = `<div class="notif-who">${c.sender_name}</div><div class="notif-when">${when}</div><div style="margin-top:4px;">${c.message}</div>`;
+      el.addEventListener('click', async ()=>{
+        try{ await sb.from('comments').update({is_read:true}).eq('id', c.id); }catch(e){}
+        await refreshComments();
+        if(unreadComments.length > 0) commentsBtn.click(); // reopen with the remaining unread ones
+      });
+      commentsDropdown.appendChild(el);
+    });
+  }
+  commentsDropdown.style.display = 'block';
 });
 
 // ---------- Préférences ----------
