@@ -1211,12 +1211,22 @@ function buildInventorySheet(){
     finByItem[item] = dayNames.map(d=> bartenderFin(bucketFor(state.week, d), item));
   });
 
-  // Start = Debut (bottom table) + Monday delivery + Thursday delivery.
-  // Debut itself still has no real source, so Start stays "?" until that's resolved —
-  // but the formula is wired so it'll compute automatically the moment Debut does.
+  // Start = Debut (previous week's confirmed Nouveau Total from Inventaire Journalier,
+  // confirmed on Sunday) + this week's Monday delivery + Thursday delivery.
+  const thisMondayDate = weeks.find(m=>weekKey(m)===state.week) || weeks[0];
+  const prevMondayDate = new Date(thisMondayDate); prevMondayDate.setDate(prevMondayDate.getDate()-7);
+  const prevWeekK = weekKey(prevMondayDate);
+  const prevConfirmed = data[prevWeekK]?.sunday?.confirmedEndOfWeekStock || null;
+
   const debutByItem = {}, startByItem = {}, finTopByItem = {};
   items.forEach(item=>{
-    const debut = null; // no source yet
+    let debut = null;
+    if(prevConfirmed){
+      const idx = stockRowIndex(stockAliases[item]);
+      if(idx !== -1 && prevConfirmed[`row${idx}`] !== undefined && prevConfirmed[`row${idx}`] !== ""){
+        debut = Number(prevConfirmed[`row${idx}`]);
+      }
+    }
     const monday = deliveryCases24(bucketFor(state.week,'Lundi'), item) || 0;
     const thursday = deliveryCases24(bucketFor(state.week,'Jeudi'), item) || 0;
     debutByItem[item] = debut;
@@ -2467,13 +2477,14 @@ function buildInventairePanel(){
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th>
+    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Confirmé (fin de semaine)</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
+  const confirmedCells = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="4"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="5"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
     if(!store[key]) store[key] = { added:"", total:"" };
 
@@ -2487,20 +2498,59 @@ function buildInventairePanel(){
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = store[key].total;
-    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; });
     tdTotal.appendChild(inTotal);
 
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
     tdExp.textContent = item.expected;
 
-    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp);
+    // Confirmé column — mirrors Nouveau total live, read-only. Only meaningful once
+    // actually confirmed (Sunday), but always visible so it's clear what will be locked in.
+    const tdConfirmed = document.createElement('td');
+    tdConfirmed.className = 'expected-cell';
+    tdConfirmed.textContent = store[key].total;
+    confirmedCells[key] = tdConfirmed;
+    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; tdConfirmed.textContent = inTotal.value; });
+
+    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp); tr.appendChild(tdConfirmed);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
 
   wrap.appendChild(buildBottomBar());
+
+  // Sunday only: confirm this week's Nouveau Total as the official end-of-week counts.
+  // Next week's Beer Inventory "Start" column reads directly from this.
+  if(state.day === 'Dimanche'){
+    const sun = weekBucket(state.week);
+    const confirmBox = document.createElement('div');
+    confirmBox.style.cssText = 'margin-top:18px; padding:14px; border:1px solid var(--copper); font-family:"Avenir Next","Segoe UI",sans-serif;';
+    const already = !!sun.confirmedEndOfWeekStock;
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:0.85rem; margin-bottom:8px;';
+    label.textContent = already
+      ? '✓ Totaux de fin de semaine déjà confirmés — reconfirme si tu as corrigé un chiffre.'
+      : "Fin de semaine : confirme ces totaux pour qu'ils deviennent le \"Start\" de la semaine prochaine sur Beer Inventory.";
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'primary';
+    confirmBtn.textContent = 'Confirmer les totaux de fin de semaine';
+    confirmBtn.addEventListener('click', async ()=>{
+      const snapshot = {};
+      inventaireItems.forEach((item, idx)=>{
+        if(item.spacer) return;
+        const key = `row${idx}`;
+        snapshot[key] = store[key].total;
+      });
+      sun.confirmedEndOfWeekStock = snapshot;
+      await saveData(document.createElement('div')); // silent-ish save; status bar above already shows feedback
+      renderPanel();
+    });
+    confirmBox.appendChild(label);
+    confirmBox.appendChild(confirmBtn);
+    wrap.appendChild(confirmBox);
+  }
+
   return wrap;
 }
 
@@ -2644,8 +2694,10 @@ function storeToWeekSettingsRow(weekKey, sun){
     paie_jaboin: sun.paieJaboin===""?null:Number(sun.paieJaboin),
     guich_caisses: sun.guichCaisses===""?null:Number(sun.guichCaisses), paye_dan: sun.payeDan===""?null:Number(sun.payeDan),
     depot: sun.depot===""?null:Number(sun.depot),
+    depot_overall: sun.depotOverall===""?null:Number(sun.depotOverall),
     depart_manual_override: !!sun.departManualOverride,
-    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue)
+    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue),
+    confirmed_end_of_week_stock: sun.confirmedEndOfWeekStock || null
   };
 }
 function weekSettingsRowToStore(row){
@@ -2654,8 +2706,10 @@ function weekSettingsRowToStore(row){
     pinutsTbxl: row.pinuts_tbxl ?? "", factOver: row.fact_over ?? "", reading: row.reading ?? "",
     bouteilles: row.bouteilles ?? "", autres: row.autres ?? "", paieJaboin: row.paie_jaboin ?? -350,
     guichCaisses: row.guich_caisses ?? "", payeDan: row.paye_dan ?? "", depot: row.depot ?? "",
+    depotOverall: row.depot_overall ?? "",
     departManualOverride: row.depart_manual_override || false,
-    departManualValue: row.depart_manual_value ?? ""
+    departManualValue: row.depart_manual_value ?? "",
+    confirmedEndOfWeekStock: row.confirmed_end_of_week_stock || null
   };
 }
 
