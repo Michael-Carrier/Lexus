@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.1</title>
+<title>Registre du bar</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -578,7 +578,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v1.7</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.0</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -671,8 +671,6 @@ const deliveryDays = ["Lundi","Jeudi"];
 const tabs = [
   {id:"bartDay", label:"Bartend. Jour", ready:true},
   {id:"bartNight", label:"Bartend. Soir", ready:true},
-  {id:"stockDay", label:"Stock (Jour)", ready:true},
-  {id:"stockNight", label:"Stock (Nuit)", ready:true},
   {id:"inventaire", label:"Inventaire Journalier", ready:true},
   {id:"delivery", label:"Beer Delivery", ready:true, restrictedTo:deliveryDays},
   {id:"misc", label:"Poker", ready:true},
@@ -793,7 +791,7 @@ let state = {
 // (this is intentionally simple, per "we'll worry about protection later").
 const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
-  barmaid: ['bartDay','bartNight','stockDay','stockNight','comments'],
+  barmaid: ['bartDay','bartNight','comments'],
   janitor: ['inventaire','comments'],
   boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
 };
@@ -889,15 +887,7 @@ function renderPanel(){
   } else if(tab.id === "delivery"){
     panel.appendChild(buildDeliveryPanel());
   } else if(tab.id === "bartDay" || tab.id === "bartNight"){
-    if(state.subView === 'stock'){
-      panel.appendChild(buildStockPanel(tab.id));
-    } else {
-      panel.appendChild(buildShiftPanel(tab.id));
-    }
-  } else if(tab.id === "stockDay"){
-    panel.appendChild(buildStockPanel('bartDay'));
-  } else if(tab.id === "stockNight"){
-    panel.appendChild(buildStockPanel('bartNight'));
+    panel.appendChild(buildShiftPanel(tab.id));
   } else if(tab.id === "misc"){
     panel.appendChild(buildMiscPanel());
   } else if(tab.id === "sunday"){
@@ -2072,6 +2062,7 @@ function buildSundayPanel(){
   renderSection('', section1FlatEnd);
 
   renderSection('Section 2 — alimente #2 Overall Summary', section2);
+  wrap.appendChild(buildBottomBar());
   return wrap;
 }
 
@@ -2221,15 +2212,6 @@ function buildShiftPanel(shiftType){
   eField.appendChild(eInput);
 
   topRow.appendChild(bField); topRow.appendChild(sField); topRow.appendChild(eField);
-
-  if(state.role === 'boss'){
-    const stockBtn = document.createElement('button');
-    stockBtn.className = 'stock-btn';
-    stockBtn.textContent = 'Stock du quart';
-    stockBtn.addEventListener('click', ()=>{ state.subView = 'stock'; renderPanel(); });
-    topRow.appendChild(stockBtn);
-  }
-
   wrap.appendChild(topRow);
 
   // Second bartender (e.g. a party needs two people covering the same shift)
@@ -2344,6 +2326,8 @@ function buildShiftPanel(shiftType){
     wrap.appendChild(pendingNote);
   }
 
+  wrap.appendChild(buildStockSection(shiftType, bucket));
+
   const bottomBar = document.createElement('div');
   bottomBar.className = 'bottom-bar no-print';
   const saveStatus = document.createElement('div');
@@ -2376,96 +2360,107 @@ function buildShiftPanel(shiftType){
   return wrap;
 }
 
-function buildStockPanel(shiftType){
-  const cfg = shiftConfig[shiftType];
-  const bucket = ensureBucket();
+function buildStockSection(shiftType, bucket){
   if(!bucket[shiftType]) bucket[shiftType] = {};
   const store = bucket[shiftType];
   if(!store.stock) store.stock = {};
 
   const isDay = shiftType === 'bartDay';
-  const otherType = isDay ? 'bartNight' : 'bartDay';
 
-  const wrap = document.createElement('div');
-  wrap.innerHTML = `
-    <h2>Stock du quart — ${cfg.label}</h2>
-    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé). Colonnes grises = aperçu du quart voisin.</div>
-  `;
+  const section = document.createElement('div');
+  section.style.marginTop = '28px';
+  const h = document.createElement('h2');
+  h.textContent = 'Stock du quart';
+  h.style.fontSize = '1.1rem';
+  section.appendChild(h);
+  const sub = document.createElement('div');
+  sub.className = 'sub';
+  sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
+  section.appendChild(sub);
 
-  const leftLabel = isDay ? 'Hier — Inventaire (Nouveau total)' : "Aujourd'hui — Jour (Total)";
-  const rightLabel = isDay ? "Aujourd'hui — Soir (Début)" : "Aujourd'hui — Inventaire (Nouveau total)";
+  // Empty ("") or missing = treated as 0 for comparisons, per your instruction — only a
+  // genuinely in-flight fetch (still loading) shows "..." instead of a number.
+  function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); }
 
-  const table = document.createElement('table');
-  table.className = 'form-table';
-  table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>${leftLabel}</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th><th>${rightLabel}</th>
-  </tr></thead>`;
-  const tbody = document.createElement('tbody');
-
-  // Left preview needs yesterday's Inventaire only for the Day shift (may cross into last week).
-  // Everything else (today's other shift, today's inventaire) is already in memory — same week/day.
-  let yesterdayInventaire = null; // only used when isDay
+  let yesterdayInventaire = null; // only fetched for the Day shift (may cross into last week)
   const prevRef = isDay ? previousDayRef(state.week, state.day) : null;
 
-  const leftCells = {}, rightCells = {}, debutInputs = {}, rowStores = {};
+  const leftVals = {}, rightVals = {}, rowStores = {}, debutInputs = {}, leftCellEls = {}, rightCellEls = {};
 
   function computeLeftValue(key){
     if(isDay){
       if(yesterdayInventaire === null) return undefined; // loading
-      const it = yesterdayInventaire[key];
-      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
-    } else {
-      const it = bucket.bartDay?.stock?.[key];
-      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
+      return numOrZero(yesterdayInventaire[key]?.total);
     }
+    return numOrZero(bucket.bartDay?.stock?.[key]?.total);
   }
   function computeRightValue(key){
-    if(isDay){
-      const it = bucket.bartNight?.stock?.[key];
-      return (it && it.debut !== "" && it.debut !== undefined) ? Number(it.debut) : null;
-    } else {
-      const it = bucket.inventaire?.[key];
-      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
-    }
+    if(isDay) return numOrZero(bucket.bartNight?.stock?.[key]?.debut);
+    return numOrZero(bucket.inventaire?.[key]?.total);
   }
 
   function refreshRow(key){
     const rowStore = rowStores[key];
     const leftVal = computeLeftValue(key);
-    const leftCell = leftCells[key];
-    if(leftVal === undefined){ leftCell.textContent = '...'; leftCell.classList.remove('mismatch-cell'); }
-    else if(leftVal === null){ leftCell.textContent = '?'; leftCell.classList.remove('mismatch-cell'); }
-    else {
-      leftCell.textContent = leftVal;
-      const debutVal = rowStore.debut === "" ? null : Number(rowStore.debut);
-      const mismatch = debutVal !== null && debutVal !== leftVal;
-      leftCell.classList.toggle('mismatch-cell', mismatch);
-      debutInputs[key].classList.toggle('mismatch-cell', mismatch);
+    if(leftCellEls[key]){
+      if(leftVal === undefined){ leftCellEls[key].textContent = '...'; leftCellEls[key].classList.remove('mismatch-cell'); }
+      else {
+        leftCellEls[key].textContent = leftVal;
+        const debutVal = numOrZero(rowStore.debut);
+        const mismatch = debutVal !== leftVal;
+        leftCellEls[key].classList.toggle('mismatch-cell', mismatch);
+        debutInputs[key].classList.toggle('mismatch-cell', mismatch);
+      }
     }
-    const rightVal = computeRightValue(key);
-    rightCells[key].textContent = rightVal===null ? '—' : rightVal;
+    if(rightCellEls[key]) rightCellEls[key].textContent = computeRightValue(key);
   }
 
+  // Three separate tables, side by side — left preview / main form / right preview.
+  const flexWrap = document.createElement('div');
+  flexWrap.style.cssText = 'display:flex; gap:10px; align-items:flex-start; overflow-x:auto;';
+
+  const leftTable = document.createElement('table'); leftTable.className = 'form-table';
+  leftTable.style.cssText = 'flex:0 0 130px; background:#EDEAE2;';
+  leftTable.innerHTML = `<thead><tr><th>${isDay ? "Hier — Inventaire" : "Jour — Total"}</th></tr></thead>`;
+  const leftBody = document.createElement('tbody'); leftTable.appendChild(leftBody);
+
+  const mainTable = document.createElement('table'); mainTable.className = 'form-table';
+  mainTable.style.flex = '1 1 auto';
+  mainTable.innerHTML = `<thead><tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
+  const mainBody = document.createElement('tbody'); mainTable.appendChild(mainBody);
+
+  const rightTable = document.createElement('table'); rightTable.className = 'form-table';
+  rightTable.style.cssText = 'flex:0 0 130px; background:#EDEAE2;';
+  rightTable.innerHTML = `<thead><tr><th>${isDay ? "Soir — Début" : "Inventaire — Total"}</th></tr></thead>`;
+  const rightBody = document.createElement('tbody'); rightTable.appendChild(rightBody);
+
   inventaireItems.forEach((item, idx)=>{
-    const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="8"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){
+      [leftBody, mainBody, rightBody].forEach((body, bi)=>{
+        const tr = document.createElement('tr'); tr.className = 'spacer';
+        tr.innerHTML = `<td colspan="${bi===1?6:1}"></td>`;
+        body.appendChild(tr);
+      });
+      return;
+    }
     const key = `row${idx}`;
     if(!store.stock[key]) store.stock[key] = { debut:"", ajoutCases:"", ajoutBeers:"", fin:"", total:"", debutManual:false };
     const rowStore = store.stock[key];
     rowStores[key] = rowStore;
 
-    // Auto-populate Début from the appropriate source, unless the person already overrode it.
     if(!rowStore.debutManual && rowStore.debut === ""){
       const auto = computeLeftValue(key);
-      if(auto !== null && auto !== undefined) rowStore.debut = auto;
+      if(auto !== undefined) rowStore.debut = auto;
     }
 
-    const tdName = document.createElement('td'); tdName.textContent = item.name;
+    // Left preview row
+    const trL = document.createElement('tr');
+    const tdL = document.createElement('td'); tdL.className = 'preview-cell'; tdL.textContent = '...';
+    leftCellEls[key] = tdL; trL.appendChild(tdL); leftBody.appendChild(trL);
 
-    const tdLeft = document.createElement('td');
-    tdLeft.className = 'preview-cell';
-    tdLeft.textContent = '...';
-    leftCells[key] = tdLeft;
+    // Main row
+    const trM = document.createElement('tr');
+    const tdName = document.createElement('td'); tdName.textContent = item.name;
 
     const tdDebut = document.createElement('td');
     const inDebut = document.createElement('input');
@@ -2488,22 +2483,11 @@ function buildStockPanel(shiftType){
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num calc'; inTotal.value = rowStore.total;
 
-    const tdRight = document.createElement('td');
-    tdRight.className = 'preview-cell';
-    tdRight.textContent = '—';
-    rightCells[key] = tdRight;
-
     function recalcTotal(){
-      rowStore.total = round2((Number(rowStore.debut)||0) + (Number(rowStore.ajoutBeers)||0) - (Number(rowStore.fin)||0));
+      rowStore.total = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       inTotal.value = rowStore.total;
     }
-
-    inDebut.addEventListener('input', ()=>{
-      rowStore.debut = inDebut.value;
-      rowStore.debutManual = true; // once touched, stop auto-overwriting on future renders
-      recalcTotal();
-      refreshRow(key);
-    });
+    inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; rowStore.debutManual = true; recalcTotal(); refreshRow(key); });
     inCases.addEventListener('input', ()=>{
       rowStore.ajoutCases = inCases.value;
       rowStore.ajoutBeers = inCases.value === "" ? "" : round2(Number(inCases.value)*24);
@@ -2516,23 +2500,28 @@ function buildStockPanel(shiftType){
 
     tdDebut.appendChild(inDebut); tdCases.appendChild(inCases); tdBeers.appendChild(inBeers);
     tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
-    tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdDebut); tr.appendChild(tdCases); tr.appendChild(tdBeers);
-    tr.appendChild(tdFin); tr.appendChild(tdTotal); tr.appendChild(tdRight);
-    tbody.appendChild(tr);
+    trM.appendChild(tdName); trM.appendChild(tdDebut); trM.appendChild(tdCases); trM.appendChild(tdBeers);
+    trM.appendChild(tdFin); trM.appendChild(tdTotal);
+    mainBody.appendChild(trM);
+
+    // Right preview row
+    const trR = document.createElement('tr');
+    const tdR = document.createElement('td'); tdR.className = 'preview-cell'; tdR.textContent = '...';
+    rightCellEls[key] = tdR; trR.appendChild(tdR); rightBody.appendChild(trR);
   });
-  table.appendChild(tbody);
-  wrap.appendChild(table);
+
+  flexWrap.appendChild(leftTable); flexWrap.appendChild(mainTable); flexWrap.appendChild(rightTable);
+  section.appendChild(flexWrap);
 
   if(isDay){
     fetchInventaireDay(prevRef.weekKey, prevRef.day).then(items=>{
       yesterdayInventaire = items || {};
-      Object.keys(leftCells).forEach(refreshRow);
+      Object.keys(leftCellEls).forEach(refreshRow);
     });
   } else {
-    Object.keys(leftCells).forEach(refreshRow);
+    Object.keys(leftCellEls).forEach(refreshRow);
   }
 
-  // Navigation to the neighbouring pages
   const navRow = document.createElement('div');
   navRow.className = 'shift-row no-print'; navRow.style.marginTop='10px';
   const leftNavBtn = document.createElement('button');
@@ -2556,30 +2545,9 @@ function buildStockPanel(shiftType){
     renderTabs(); renderPanel();
   });
   navRow.appendChild(leftNavBtn); navRow.appendChild(rightNavBtn);
-  wrap.appendChild(navRow);
+  section.appendChild(navRow);
 
-  const bar = document.createElement('div');
-  bar.className = 'bottom-bar';
-  const status = document.createElement('div');
-  status.className = 'status'; status.textContent = "Pas encore enregistré.";
-  const btn = document.createElement('button');
-  btn.className = 'primary';
-  btn.textContent = 'Enregistrer';
-  btn.addEventListener('click', async ()=>{
-    await saveData(status);
-  });
-  bar.appendChild(status); bar.appendChild(btn);
-  wrap.appendChild(bar);
-
-  if(state.subView === 'stock'){
-    const back = document.createElement('button');
-    back.className = 'print-btn no-print'; back.style.marginTop = '10px';
-    back.textContent = '← Retour au quart';
-    back.addEventListener('click', ()=>{ state.subView = null; renderPanel(); });
-    wrap.appendChild(back);
-  }
-
-  return wrap;
+  return section;
 }
 
 function buildTaxBlock(title, store){
@@ -2697,12 +2665,12 @@ function buildInventairePanel(){
   wrap.appendChild(table);
 
   // Third check: does tonight's Total + what the janitor added actually equal today's confirmed Nouveau Total?
+  // Empty/missing = treated as 0 here, per your instruction — only a real value mismatch is flagged.
   function checkCloseOut(key){
-    const nightTotal = bucket.bartNight?.stock?.[key]?.total;
-    if(nightTotal === undefined || nightTotal === "") return;
-    const expected = round2(Number(nightTotal) + (Number(store[key].added)||0));
-    const actual = store[key].total === "" ? null : Number(store[key].total);
-    const mismatch = actual !== null && actual !== expected;
+    const nightTotal = Number(bucket.bartNight?.stock?.[key]?.total) || 0;
+    const expected = round2(nightTotal + (Number(store[key].added)||0));
+    const actual = round2(Number(store[key].total) || 0);
+    const mismatch = actual !== expected;
     leftCells[key].classList.toggle('mismatch-cell', mismatch);
     totalInputs[key].classList.toggle('mismatch-cell', mismatch);
   }
