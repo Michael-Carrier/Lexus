@@ -1180,6 +1180,8 @@ function buildInventorySheet(){
       const r = bucket[k]?.stock?.[`row${idx}`];
       if(r){ sum += Number(r.ajoutBeers)||0; found = true; }
     });
+    const inv = bucket.inventaire?.[`row${idx}`];
+    if(inv){ sum += Number(inv.added)||0; found = true; }
     return found ? sum : 0;
   }
   // "Sold" for a given day/item = Bartender Jour Fin + Bartender Soir Fin + Janitor's Inventaire Journalier Ajouté.
@@ -1308,6 +1310,29 @@ function buildInventorySheet(){
     cellIn(g2,row,9, anyUnknown?'?':round2(total), anyUnknown?'pg-unknown':'pg-calc');
   });
   wrap.appendChild(g2);
+
+  const h3 = document.createElement('div');
+  h3.className = 'sub'; h3.style.marginTop = '22px';
+  h3.textContent = 'Vendu, jour par jour — Fin jour + Fin soir + Inventaire Journalier (différent de l\'Ajouté ci-dessus)';
+  wrap.appendChild(h3);
+
+  const g3 = grid();
+  cellIn(g3,1,1,'','pg-header');
+  dayNames.forEach((d,i)=> cellIn(g3,1,2+i,d,'pg-header'));
+  cellIn(g3,1,9,'Total','pg-header');
+  items.forEach((item,i)=>{
+    const row = 2+i;
+    cellIn(g3,row,1,item,'pg-label');
+    const perDay = finByItem[item];
+    perDay.forEach((v,ci)=>{
+      if(v===null) cellIn(g3,row,2+ci,'?','pg-unknown');
+      else cellIn(g3,row,2+ci, round2(v), 'pg-calc', 'Fin jour + Fin soir (Stock du quart) + Ajouté (Inventaire Journalier) pour cette journée.');
+    });
+    const anyUnknown = perDay.some(v=>v===null);
+    const total = perDay.reduce((s,v)=> s+(v||0), 0);
+    cellIn(g3,row,9, anyUnknown?'?':round2(total), anyUnknown?'pg-unknown':'pg-calc', 'Somme des 7 jours ci-dessus — c\'est cette valeur qui apparaît comme "Vendu" dans le tableau du dessus.');
+  });
+  wrap.appendChild(g3);
 
   wrap.appendChild(buildBottomBar());
   return wrap;
