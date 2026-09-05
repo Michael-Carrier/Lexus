@@ -2829,6 +2829,10 @@ savePinBtn.addEventListener('click', async ()=>{
 });
 
 // ---------- Ask AI (boss only) ----------
+function localDateString(d){
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 const ASK_AI_URL = 'https://tbnblorbmxthkbbdtekg.supabase.co/functions/v1/rapid-endpoint';
 const askAiInput = document.getElementById('askAiInput');
 const askAiBtn = document.getElementById('askAiBtn');
@@ -2848,7 +2852,7 @@ async function askAi(){
         'Authorization': 'Bearer ' + SUPABASE_KEY,
         'apikey': SUPABASE_KEY
       },
-      body: JSON.stringify({ question })
+      body: JSON.stringify({ question, today: localDateString(new Date()) })
     });
     const result = await res.json();
     if(result.error){
