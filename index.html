@@ -184,6 +184,12 @@
     color:var(--ink-soft);
     font-variant-numeric:tabular-nums;
   }
+  .calc-hint-cell{
+    color:var(--ink-soft);
+    font-style:italic;
+    font-variant-numeric:tabular-nums;
+    cursor:help;
+  }
 
   .bottom-bar{
     display:flex;
@@ -1016,6 +1022,24 @@ function bucketFor(weekK, dayN){
   return data[weekK][dayN];
 }
 
+// "Yesterday" relative to (weekK, dayN) — may fall in the previous week (Lundi -> last Dimanche).
+function previousDayRef(weekK, dayN){
+  const idx = dayNames.indexOf(dayN);
+  if(idx > 0) return { weekKey: weekK, day: dayNames[idx-1] };
+  const monday = new Date(weekK + "T00:00:00");
+  monday.setDate(monday.getDate() - 7);
+  return { weekKey: weekKey(monday), day: 'Dimanche' };
+}
+async function fetchInventaireDay(weekK, dayN){
+  try{
+    const { data: row, error } = await sb.from('inventaire_daily').select('items').eq('week_key', weekK).eq('day', dayN).maybeSingle();
+    if(error || !row) return null;
+    return row.items || null;
+  }catch(e){ return null; }
+}
+// Cache for #5 Inventory Summary's cross-week lookup (Monday needs last week's Sunday).
+let prevSundayInventaireCache = { weekKey: null, items: null };
+
 function weekBucket(weekK){
   if(!data[weekK]) data[weekK] = {};
   if(!data[weekK].sunday) data[weekK].sunday = {};
@@ -1154,7 +1178,7 @@ function buildInventorySheet(){
   const weekLabel = weekSelect.options[weekSelect.selectedIndex].textContent;
   wrap.innerHTML = `
     <h2>#5 Inventory Summary</h2>
-    <div class="sub no-print">${weekLabel} — Start = Debut + livraison lundi + livraison jeudi. Fin = Start − total vendu de la semaine (Fin jour + Fin soir + Ajouté de l'Inventaire Journalier). Debut lui-même n'a pas encore de source, donc Start/Fin restent "?" pour l'instant.</div>
+    <div class="sub no-print">${weekLabel} — Start = Debut (confirmé dimanche dernier) + livraison lundi + livraison jeudi. Vendu (par jour) = Hier − Aujourd'hui + Ajout jour + Ajout soir + Ajouté janitor. Fin = Start − Vendu de la semaine.</div>
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
@@ -1172,31 +1196,6 @@ function buildInventorySheet(){
   function stockRowIndex(name){ return inventaireItems.findIndex(it=>!it.spacer && it.name===name); }
   function deliveryRowIndex(name){ return deliveryItems.findIndex(it=>!it.spacer && it.name===name); }
 
-  function bartenderAjout(bucket, invName){
-    const idx = stockRowIndex(stockAliases[invName]);
-    if(idx===-1) return null;
-    let sum = 0, found = false;
-    ['bartDay','bartNight'].forEach(k=>{
-      const r = bucket[k]?.stock?.[`row${idx}`];
-      if(r){ sum += Number(r.ajoutBeers)||0; found = true; }
-    });
-    const inv = bucket.inventaire?.[`row${idx}`];
-    if(inv){ sum += Number(inv.added)||0; found = true; }
-    return found ? sum : 0;
-  }
-  // "Sold" for a given day/item = Bartender Jour Fin + Bartender Soir Fin + Janitor's Inventaire Journalier Ajouté.
-  function bartenderFin(bucket, invName){
-    const idx = stockRowIndex(stockAliases[invName]);
-    if(idx===-1) return null;
-    let sum = 0, found = false;
-    ['bartDay','bartNight'].forEach(k=>{
-      const r = bucket[k]?.stock?.[`row${idx}`];
-      if(r){ sum += Number(r.fin)||0; found = true; }
-    });
-    const inv = bucket.inventaire?.[`row${idx}`];
-    if(inv){ sum += Number(inv.added)||0; found = true; }
-    return found ? sum : 0;
-  }
   function deliveryCases24(bucket, invName){
     const alias = deliveryAliases[invName];
     if(!alias) return null;
@@ -1206,19 +1205,52 @@ function buildInventorySheet(){
     return r && r.cases ? Number(r.cases)*24 : 0;
   }
 
-  // Ajout per item per weekday — computed once, reused by both tables.
-  const ajoutByItem = {};
-  const finByItem = {};
+  // Sold(day,item) = Hier (confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté janitor.
+  // Needs one cross-week fetch for Monday's "yesterday" (previous week's Sunday) — cached so
+  // this doesn't refetch on every render; triggers one re-render once it lands.
+  const thisMondayDate = weeks.find(m=>weekKey(m)===state.week) || weeks[0];
+  const prevMondayDate = new Date(thisMondayDate); prevMondayDate.setDate(prevMondayDate.getDate()-7);
+  const prevWeekK = weekKey(prevMondayDate);
+
+  if(prevSundayInventaireCache.weekKey !== prevWeekK){
+    fetchInventaireDay(prevWeekK, 'Dimanche').then(fetchedItems=>{
+      prevSundayInventaireCache = { weekKey: prevWeekK, items: fetchedItems || {} };
+      if(state.tab === 'pdfSheets' && state.pdfView === '#5 Inventory Summary') renderPanel();
+    });
+  }
+  const prevSundayItems = (prevSundayInventaireCache.weekKey === prevWeekK) ? prevSundayInventaireCache.items : null;
+
+  function dayTotal(weekK, day, key){
+    if(weekK === state.week) return bucketFor(weekK, day).inventaire?.[key]?.total !== undefined && bucketFor(weekK, day).inventaire?.[key]?.total !== ""
+      ? Number(bucketFor(weekK, day).inventaire[key].total) : null;
+    if(weekK === prevWeekK && day === 'Dimanche'){
+      if(prevSundayItems === null) return undefined; // still loading
+      return (prevSundayItems[key] && prevSundayItems[key].total !== "") ? Number(prevSundayItems[key].total) : null;
+    }
+    return null;
+  }
+
+  const soldByItem = {};
   items.forEach(item=>{
-    ajoutByItem[item] = dayNames.map(d=> bartenderAjout(bucketFor(state.week, d), item));
-    finByItem[item] = dayNames.map(d=> bartenderFin(bucketFor(state.week, d), item));
+    const idx = stockRowIndex(stockAliases[item]);
+    const key = `row${idx}`;
+    soldByItem[item] = dayNames.map((day,i)=>{
+      if(idx===-1) return null;
+      const [yWeek, yDay] = i===0 ? [prevWeekK,'Dimanche'] : [state.week, dayNames[i-1]];
+      const yesterday = dayTotal(yWeek, yDay, key);
+      const today = dayTotal(state.week, day, key);
+      if(yesterday===undefined || today===undefined) return undefined; // still loading
+      if(yesterday===null || today===null) return null; // genuinely no data
+      const bucket = bucketFor(state.week, day);
+      const dayAjout = Number(bucket.bartDay?.stock?.[key]?.ajoutBeers)||0;
+      const nightAjout = Number(bucket.bartNight?.stock?.[key]?.ajoutBeers)||0;
+      const janitorAjout = Number(bucket.inventaire?.[key]?.added)||0;
+      return round2(yesterday - today + dayAjout + nightAjout + janitorAjout);
+    });
   });
 
   // Start = Debut (previous week's confirmed Nouveau Total from Inventaire Journalier,
   // confirmed on Sunday) + this week's Monday delivery + Thursday delivery.
-  const thisMondayDate = weeks.find(m=>weekKey(m)===state.week) || weeks[0];
-  const prevMondayDate = new Date(thisMondayDate); prevMondayDate.setDate(prevMondayDate.getDate()-7);
-  const prevWeekK = weekKey(prevMondayDate);
   const prevConfirmed = data[prevWeekK]?.sunday?.confirmedEndOfWeekStock || null;
 
   const debutByItem = {}, startByItem = {}, finTopByItem = {};
@@ -1235,8 +1267,9 @@ function buildInventorySheet(){
     debutByItem[item] = debut;
     startByItem[item] = debut===null ? null : round2(debut + monday + thursday);
 
-    const weekSold = finByItem[item].some(v=>v===null) ? null
-                    : finByItem[item].reduce((s,v)=>s+(v||0),0);
+    const soldDays = soldByItem[item];
+    const weekSold = soldDays.some(v=>v===null||v===undefined) ? null
+                    : soldDays.reduce((s,v)=>s+(v||0),0);
     finTopByItem[item] = (startByItem[item]===null || weekSold===null)
       ? null : round2(startByItem[item] - weekSold);
   });
@@ -1261,7 +1294,7 @@ function buildInventorySheet(){
 
   const h1 = document.createElement('div');
   h1.className = 'sub no-print'; h1.style.marginTop = '4px';
-  h1.textContent = 'Start / semaine / Fin — 9 bières × 9 colonnes';
+  h1.textContent = 'Start / Vendu (calculé) / Fin — 9 bières × 9 colonnes';
   wrap.appendChild(h1);
 
   const g1 = grid();
@@ -1272,17 +1305,18 @@ function buildInventorySheet(){
     const row = 2+i;
     cellIn(g1,row,1,item,'pg-label');
     cellIn(g1,row,2, startByItem[item]===null?'?':startByItem[item], startByItem[item]===null?'pg-unknown':'pg-calc');
-    ajoutByItem[item].forEach((v,ci)=>{
-      if(v===null) cellIn(g1,row,3+ci,'?','pg-unknown');
-      else cellIn(g1,row,3+ci, round2(v), 'pg-calc');
+    soldByItem[item].forEach((v,ci)=>{
+      if(v===undefined) cellIn(g1,row,3+ci,'...','pg-unknown');
+      else if(v===null) cellIn(g1,row,3+ci,'?','pg-unknown');
+      else cellIn(g1,row,3+ci, v, 'pg-calc', 'Vendu ce jour-là = Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.');
     });
-    cellIn(g1,row,10, finTopByItem[item]===null?'?':finTopByItem[item], finTopByItem[item]===null?'pg-unknown':'pg-calc');
+    cellIn(g1,row,10, finTopByItem[item]===null?'?':finTopByItem[item], finTopByItem[item]===null?'pg-unknown':'pg-calc', 'Start moins le total Vendu de la semaine (somme des 7 jours).');
   });
   wrap.appendChild(g1);
 
   const h2 = document.createElement('div');
   h2.className = 'sub'; h2.style.marginTop = '22px';
-  h2.textContent = 'Debut, livraison (lundi + jeudi seulement) et Vendu (Fin jour + Fin soir + Inventaire Journalier) — alignés sous les mêmes colonnes';
+  h2.textContent = 'Debut, livraison (lundi + jeudi seulement) et Vendu (somme des 7 jours ci-dessus) — alignés sous les mêmes colonnes';
   wrap.appendChild(h2);
 
   const g2 = grid();
@@ -1302,12 +1336,13 @@ function buildInventorySheet(){
     const thursday = deliveryCases24(bucketFor(state.week,'Jeudi'), item);
     cellIn(g2,row,6, thursday===null?'?':round2(thursday), thursday===null?'pg-unknown':'pg-calc');
 
-    // Vendu mini-table, under Samedi/Dimanche — sum of "Fin" (sold) across the week
+    // Vendu mini-table, under Samedi/Dimanche — sum of the 7 daily Vendu values from the top table
     cellIn(g2,row,8,item,'pg-label');
-    const perDay = finByItem[item];
+    const perDay = soldByItem[item];
+    const stillLoading = perDay.some(v=>v===undefined);
     const anyUnknown = perDay.some(v=>v===null);
     const total = perDay.reduce((s,v)=> s+(v||0), 0);
-    cellIn(g2,row,9, anyUnknown?'?':round2(total), anyUnknown?'pg-unknown':'pg-calc');
+    cellIn(g2,row,9, stillLoading?'...':(anyUnknown?'?':round2(total)), (stillLoading||anyUnknown)?'pg-unknown':'pg-calc');
   });
   wrap.appendChild(g2);
 
@@ -2486,13 +2521,14 @@ function buildInventairePanel(){
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th>
+    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Vendu (calculé)</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
+  const soldCells = {}, todayTotalInputs = {}, todayAddedInputs = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="4"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="5"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
     if(!store[key]) store[key] = { added:"", total:"" };
 
@@ -2500,24 +2536,66 @@ function buildInventairePanel(){
     const tdAdded = document.createElement('td');
     const inAdded = document.createElement('input');
     inAdded.type='number'; inAdded.className='num'; inAdded.value = store[key].added;
-    inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; });
+    inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); });
     tdAdded.appendChild(inAdded);
+    todayAddedInputs[key] = inAdded;
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = store[key].total;
-    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; });
+    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; recalcSold(key); });
     tdTotal.appendChild(inTotal);
+    todayTotalInputs[key] = inTotal;
 
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
     tdExp.textContent = item.expected;
 
-    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp);
+    const tdSold = document.createElement('td');
+    tdSold.className = 'calc-hint-cell';
+    tdSold.textContent = '...';
+    soldCells[key] = tdSold;
+
+    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp); tr.appendChild(tdSold);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
+
+  // Vendu = Hier (total confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté (janitor).
+  // Se corrige tout seul même si le compte d'hier était lui-même décalé — on ne se fie qu'aux
+  // deux comptes physiques (hier/aujourd'hui) et à ce qui a été ajouté entre les deux.
+  let yesterdayItems = null;
+  function recalcSold(onlyKey){
+    const keys = onlyKey ? [onlyKey] : Object.keys(soldCells);
+    keys.forEach(key=>{
+      const idx = Number(key.replace('row',''));
+      if(yesterdayItems === null){
+        soldCells[key].textContent = '...';
+        soldCells[key].title = "Chargement du compte d'hier...";
+        return;
+      }
+      const yTotal = yesterdayItems[key] ? Number(yesterdayItems[key].total) : null;
+      if(yTotal === null){
+        soldCells[key].textContent = '?';
+        soldCells[key].title = "Aucun compte trouvé pour hier — impossible de calculer.";
+        return;
+      }
+      const tToday = Number(store[key].total) || 0;
+      const dayAjout = Number(bucket.bartDay?.stock?.[key]?.ajoutBeers) || 0;
+      const nightAjout = Number(bucket.bartNight?.stock?.[key]?.ajoutBeers) || 0;
+      const janitorAjout = Number(store[key].added) || 0;
+      const sold = round2(yTotal - tToday + dayAjout + nightAjout + janitorAjout);
+      soldCells[key].textContent = sold;
+      soldCells[key].title = `${yTotal} (hier) − ${tToday} (aujourd'hui) + ${dayAjout} (ajout jour) + ${nightAjout} (ajout soir) + ${janitorAjout} (ajouté janitor) = ${sold}`;
+    });
+  }
+  recalcSold();
+  const prevRef = previousDayRef(state.week, state.day);
+  fetchInventaireDay(prevRef.weekKey, prevRef.day).then(items=>{
+    yesterdayItems = items || {};
+    recalcSold();
+  });
 
   wrap.appendChild(buildBottomBar());
 
