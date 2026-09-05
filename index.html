@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar (v1.9)</title>
+<title>Registre du bar v2.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -189,6 +189,17 @@
     font-style:italic;
     font-variant-numeric:tabular-nums;
     cursor:help;
+  }
+  .preview-cell{
+    color:var(--ink-soft);
+    background:#EDEAE2;
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+  }
+  .mismatch-cell{
+    background:#F6D3CE !important;
+    color:#8A2E1E !important;
+    font-weight:600;
   }
 
   .bottom-bar{
@@ -567,7 +578,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v1.8</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v1.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1029,6 +1040,13 @@ function previousDayRef(weekK, dayN){
   const monday = new Date(weekK + "T00:00:00");
   monday.setDate(monday.getDate() - 7);
   return { weekKey: weekKey(monday), day: 'Dimanche' };
+}
+function nextDayRef(weekK, dayN){
+  const idx = dayNames.indexOf(dayN);
+  if(idx < 6) return { weekKey: weekK, day: dayNames[idx+1], sameWeek: true };
+  const monday = new Date(weekK + "T00:00:00");
+  monday.setDate(monday.getDate() + 7);
+  return { weekKey: weekKey(monday), day: 'Lundi', sameWeek: false };
 }
 async function fetchInventaireDay(weekK, dayN){
   try{
@@ -2365,35 +2383,94 @@ function buildStockPanel(shiftType){
   const store = bucket[shiftType];
   if(!store.stock) store.stock = {};
 
+  const isDay = shiftType === 'bartDay';
+  const otherType = isDay ? 'bartNight' : 'bartDay';
+
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <h2>Stock du quart — ${cfg.label}</h2>
-    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé).</div>
+    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé). Colonnes grises = aperçu du quart voisin.</div>
   `;
+
+  const leftLabel = isDay ? 'Hier — Inventaire (Nouveau total)' : "Aujourd'hui — Jour (Total)";
+  const rightLabel = isDay ? "Aujourd'hui — Soir (Début)" : "Aujourd'hui — Inventaire (Nouveau total)";
 
   const table = document.createElement('table');
   table.className = 'form-table';
-  table.innerHTML = `<thead><tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
+  table.innerHTML = `<thead><tr>
+    <th>Marque</th><th>${leftLabel}</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th><th>${rightLabel}</th>
+  </tr></thead>`;
   const tbody = document.createElement('tbody');
+
+  // Left preview needs yesterday's Inventaire only for the Day shift (may cross into last week).
+  // Everything else (today's other shift, today's inventaire) is already in memory — same week/day.
+  let yesterdayInventaire = null; // only used when isDay
+  const prevRef = isDay ? previousDayRef(state.week, state.day) : null;
+
+  const leftCells = {}, rightCells = {}, debutInputs = {}, rowStores = {};
+
+  function computeLeftValue(key){
+    if(isDay){
+      if(yesterdayInventaire === null) return undefined; // loading
+      const it = yesterdayInventaire[key];
+      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
+    } else {
+      const it = bucket.bartDay?.stock?.[key];
+      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
+    }
+  }
+  function computeRightValue(key){
+    if(isDay){
+      const it = bucket.bartNight?.stock?.[key];
+      return (it && it.debut !== "" && it.debut !== undefined) ? Number(it.debut) : null;
+    } else {
+      const it = bucket.inventaire?.[key];
+      return (it && it.total !== "" && it.total !== undefined) ? Number(it.total) : null;
+    }
+  }
+
+  function refreshRow(key){
+    const rowStore = rowStores[key];
+    const leftVal = computeLeftValue(key);
+    const leftCell = leftCells[key];
+    if(leftVal === undefined){ leftCell.textContent = '...'; leftCell.classList.remove('mismatch-cell'); }
+    else if(leftVal === null){ leftCell.textContent = '?'; leftCell.classList.remove('mismatch-cell'); }
+    else {
+      leftCell.textContent = leftVal;
+      const debutVal = rowStore.debut === "" ? null : Number(rowStore.debut);
+      const mismatch = debutVal !== null && debutVal !== leftVal;
+      leftCell.classList.toggle('mismatch-cell', mismatch);
+      debutInputs[key].classList.toggle('mismatch-cell', mismatch);
+    }
+    const rightVal = computeRightValue(key);
+    rightCells[key].textContent = rightVal===null ? '—' : rightVal;
+  }
 
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="6"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="8"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
-    if(!store.stock[key]) store.stock[key] = { debut:"", ajoutCases:"", ajoutBeers:"", fin:"", total:"" };
+    if(!store.stock[key]) store.stock[key] = { debut:"", ajoutCases:"", ajoutBeers:"", fin:"", total:"", debutManual:false };
     const rowStore = store.stock[key];
+    rowStores[key] = rowStore;
 
-    // Night shift: default Début from the same day's Day-shift ending Total, if not already set.
-    if(shiftType === 'bartNight' && rowStore.debut === ""){
-      const dayTotal = bucket.bartDay?.stock?.[key]?.total;
-      if(dayTotal !== undefined && dayTotal !== "") rowStore.debut = dayTotal;
+    // Auto-populate Début from the appropriate source, unless the person already overrode it.
+    if(!rowStore.debutManual && rowStore.debut === ""){
+      const auto = computeLeftValue(key);
+      if(auto !== null && auto !== undefined) rowStore.debut = auto;
     }
 
     const tdName = document.createElement('td'); tdName.textContent = item.name;
 
+    const tdLeft = document.createElement('td');
+    tdLeft.className = 'preview-cell';
+    tdLeft.textContent = '...';
+    leftCells[key] = tdLeft;
+
     const tdDebut = document.createElement('td');
     const inDebut = document.createElement('input');
     inDebut.type='number'; inDebut.className='num'; inDebut.value = rowStore.debut;
+    debutInputs[key] = inDebut;
 
     const tdCases = document.createElement('td');
     const inCases = document.createElement('input');
@@ -2411,12 +2488,22 @@ function buildStockPanel(shiftType){
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num calc'; inTotal.value = rowStore.total;
 
+    const tdRight = document.createElement('td');
+    tdRight.className = 'preview-cell';
+    tdRight.textContent = '—';
+    rightCells[key] = tdRight;
+
     function recalcTotal(){
       rowStore.total = round2((Number(rowStore.debut)||0) + (Number(rowStore.ajoutBeers)||0) - (Number(rowStore.fin)||0));
       inTotal.value = rowStore.total;
     }
 
-    inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; recalcTotal(); });
+    inDebut.addEventListener('input', ()=>{
+      rowStore.debut = inDebut.value;
+      rowStore.debutManual = true; // once touched, stop auto-overwriting on future renders
+      recalcTotal();
+      refreshRow(key);
+    });
     inCases.addEventListener('input', ()=>{
       rowStore.ajoutCases = inCases.value;
       rowStore.ajoutBeers = inCases.value === "" ? "" : round2(Number(inCases.value)*24);
@@ -2429,12 +2516,47 @@ function buildStockPanel(shiftType){
 
     tdDebut.appendChild(inDebut); tdCases.appendChild(inCases); tdBeers.appendChild(inBeers);
     tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
-    tr.appendChild(tdName); tr.appendChild(tdDebut); tr.appendChild(tdCases); tr.appendChild(tdBeers);
-    tr.appendChild(tdFin); tr.appendChild(tdTotal);
+    tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdDebut); tr.appendChild(tdCases); tr.appendChild(tdBeers);
+    tr.appendChild(tdFin); tr.appendChild(tdTotal); tr.appendChild(tdRight);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
+
+  if(isDay){
+    fetchInventaireDay(prevRef.weekKey, prevRef.day).then(items=>{
+      yesterdayInventaire = items || {};
+      Object.keys(leftCells).forEach(refreshRow);
+    });
+  } else {
+    Object.keys(leftCells).forEach(refreshRow);
+  }
+
+  // Navigation to the neighbouring pages
+  const navRow = document.createElement('div');
+  navRow.className = 'shift-row no-print'; navRow.style.marginTop='10px';
+  const leftNavBtn = document.createElement('button');
+  leftNavBtn.className = 'print-btn';
+  leftNavBtn.textContent = isDay ? "← Aller à l'Inventaire d'hier" : "← Aller au quart de Jour";
+  leftNavBtn.addEventListener('click', ()=>{
+    if(isDay){
+      state.week = prevRef.weekKey; state.day = prevRef.day; state.tab = 'inventaire';
+      weekSelect.value = prevRef.weekKey;
+      renderDayButtons(); renderTabs();
+      loadWeekFromSupabase(prevRef.weekKey).then(renderPanel);
+    } else {
+      state.tab = 'bartDay'; renderTabs(); renderPanel();
+    }
+  });
+  const rightNavBtn = document.createElement('button');
+  rightNavBtn.className = 'print-btn';
+  rightNavBtn.textContent = isDay ? "Aller au quart de Soir →" : "Aller à l'Inventaire →";
+  rightNavBtn.addEventListener('click', ()=>{
+    state.tab = isDay ? 'bartNight' : 'inventaire';
+    renderTabs(); renderPanel();
+  });
+  navRow.appendChild(leftNavBtn); navRow.appendChild(rightNavBtn);
+  wrap.appendChild(navRow);
 
   const bar = document.createElement('div');
   bar.className = 'bottom-bar';
@@ -2516,36 +2638,42 @@ function buildInventairePanel(){
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <h2>Inventaire Journalier</h2>
-    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Quantité ajoutée et nouveau total pour chaque item.</div>
+    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.</div>
   `;
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Vendu (calculé)</th>
+    <th>Marque</th><th>Aujourd'hui — Soir (Total)</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Vendu (calculé)</th><th>Demain — Jour (Début)</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
-  const soldCells = {}, todayTotalInputs = {}, todayAddedInputs = {};
+  const soldCells = {}, leftCells = {}, rightCells = {}, totalInputs = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="5"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="7"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
     if(!store[key]) store[key] = { added:"", total:"" };
 
     const tdName = document.createElement('td'); tdName.textContent = item.name;
+
+    const tdLeft = document.createElement('td');
+    tdLeft.className = 'preview-cell';
+    const nightTotal = bucket.bartNight?.stock?.[key]?.total;
+    tdLeft.textContent = (nightTotal !== undefined && nightTotal !== "") ? nightTotal : '—';
+    leftCells[key] = tdLeft;
+
     const tdAdded = document.createElement('td');
     const inAdded = document.createElement('input');
     inAdded.type='number'; inAdded.className='num'; inAdded.value = store[key].added;
-    inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); });
+    inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); checkCloseOut(key); });
     tdAdded.appendChild(inAdded);
-    todayAddedInputs[key] = inAdded;
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = store[key].total;
-    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; recalcSold(key); });
+    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; recalcSold(key); checkCloseOut(key); });
     tdTotal.appendChild(inTotal);
-    todayTotalInputs[key] = inTotal;
+    totalInputs[key] = inTotal;
 
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
@@ -2556,11 +2684,62 @@ function buildInventairePanel(){
     tdSold.textContent = '...';
     soldCells[key] = tdSold;
 
-    tr.appendChild(tdName); tr.appendChild(tdAdded); tr.appendChild(tdTotal); tr.appendChild(tdExp); tr.appendChild(tdSold);
+    const tdRight = document.createElement('td');
+    tdRight.className = 'preview-cell';
+    tdRight.textContent = '—';
+    rightCells[key] = tdRight;
+
+    tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdAdded); tr.appendChild(tdTotal);
+    tr.appendChild(tdExp); tr.appendChild(tdSold); tr.appendChild(tdRight);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
   wrap.appendChild(table);
+
+  // Third check: does tonight's Total + what the janitor added actually equal today's confirmed Nouveau Total?
+  function checkCloseOut(key){
+    const nightTotal = bucket.bartNight?.stock?.[key]?.total;
+    if(nightTotal === undefined || nightTotal === "") return;
+    const expected = round2(Number(nightTotal) + (Number(store[key].added)||0));
+    const actual = store[key].total === "" ? null : Number(store[key].total);
+    const mismatch = actual !== null && actual !== expected;
+    leftCells[key].classList.toggle('mismatch-cell', mismatch);
+    totalInputs[key].classList.toggle('mismatch-cell', mismatch);
+  }
+  Object.keys(leftCells).forEach(checkCloseOut);
+
+  // Right preview: tomorrow's Day shift Début, if that week is already loaded (almost always
+  // true within the same week; crossing into next week — e.g. filling out Sunday — is rare
+  // enough here that we just show "pas encore" rather than fetching ahead).
+  const nextRef = nextDayRef(state.week, state.day);
+  Object.keys(rightCells).forEach(key=>{
+    if(nextRef.sameWeek){
+      const d = bucketFor(state.week, nextRef.day).bartDay?.stock?.[key]?.debut;
+      rightCells[key].textContent = (d !== undefined && d !== "") ? d : '—';
+    } else {
+      rightCells[key].textContent = '—';
+    }
+  });
+
+  const navRow = document.createElement('div');
+  navRow.className = 'shift-row no-print'; navRow.style.marginTop='10px';
+  const leftNavBtn = document.createElement('button');
+  leftNavBtn.className = 'print-btn';
+  leftNavBtn.textContent = "← Aller au quart de Soir";
+  leftNavBtn.addEventListener('click', ()=>{ state.tab = 'bartNight'; renderTabs(); renderPanel(); });
+  const rightNavBtn = document.createElement('button');
+  rightNavBtn.className = 'print-btn';
+  rightNavBtn.textContent = "Aller au Jour de demain →";
+  rightNavBtn.addEventListener('click', async ()=>{
+    if(!nextRef.sameWeek){ weekSelect.value = nextRef.weekKey; state.week = nextRef.weekKey; }
+    state.day = nextRef.day; state.tab = 'bartDay';
+    weekSelect.value = state.week;
+    renderDayButtons(); renderTabs();
+    if(!nextRef.sameWeek) await loadWeekFromSupabase(state.week);
+    renderPanel();
+  });
+  navRow.appendChild(leftNavBtn); navRow.appendChild(rightNavBtn);
+  wrap.appendChild(navRow);
 
   // Vendu = Hier (total confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté (janitor).
   // Se corrige tout seul même si le compte d'hier était lui-même décalé — on ne se fie qu'aux
