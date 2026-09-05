@@ -1410,13 +1410,18 @@ function buildOverallSheet(){
   // Middle-right block: Reste = the top-right block's Total, minus everything above it here.
   const facturesKnown = sun.factures !== "" && sun.factures !== undefined;
   const guichCaissesKnown = sun.guichCaisses !== "" && sun.guichCaisses !== undefined;
+  const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
   known(12,5,'Facture', facturesKnown ? round2(Number(sun.factures)) : null);
   known(13,5,'Interac', block1Interac);
   known(14,5,'Guich Pok', round2(pk.guichet));
   known(15,5,'Guich Caiss', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : null);
-  unk(16,5,'Depot'); // held off — several "Depot" fields already exist, needs owner clarification
+  known(16,5,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : null);
   known(17,5,'Coup/Valid', round2(pk.machine));
-  known(19,5,'Reste', null); // Depot is unresolved, so this can never honestly compute yet
+  const resteKnown = topRightKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
+  const resteValue = resteKnown ? round2(
+    topRightTotal - Number(sun.factures) - block1Interac - pk.guichet - Number(sun.guichCaisses) - Number(sun.depotOverall) - pk.machine
+  ) : null;
+  known(19,5,'Reste', resteValue);
 
   // Block 2 (lower-left): Caisses/Over Caisses repeat block 1; Poker/Over Poker from #1; Bouteilles/Autres from Sunday; Over Pool pinned.
   const bouteillesKnown = sun.bouteilles !== "" && sun.bouteilles !== undefined;
@@ -1946,7 +1951,7 @@ function buildSundayPanel(){
   const section1PinutsFields = [ ['pinutsTbxl','TXBL'] ];
   const section1FlatEnd = [ ['factOver','Fact. Over'], ['reading','Reading'] ];
   const section2 = [
-    ['bouteilles','Bouteilles'], ['autres','Autres'], ['paieJaboin','Paie Jaboin'], ['guichCaisses','Guich Caisses'], ['payeDan','Paye Dan']
+    ['bouteilles','Bouteilles'], ['autres','Autres'], ['paieJaboin','Paie Jaboin'], ['guichCaisses','Guich Caisses'], ['payeDan','Paye Dan'], ['depotOverall','Depot']
   ];
   [...section1Flat, ...section1PoolFields, ...section1PinutsFields, ...section1FlatEnd, ...section2]
     .forEach(([key])=>{ if(store[key]===undefined) store[key]=""; });
@@ -2220,31 +2225,36 @@ function buildShiftPanel(shiftType){
   overField.appendChild(overInput);
   wrap.appendChild(overField);
 
-  // Jour + Nuit — both available on either form, since a bartender can cover both.
-  // Their combined total drives the taxes, replacing the old single "Cash" field.
+  // Only show the field matching this form's own shift — Day shift form gets Jour,
+  // Night shift form gets Nuit. Taxes still compute off whichever one is filled in.
   const jnRow = document.createElement('div');
   jnRow.className = 'shift-row';
-  const jourField = document.createElement('div'); jourField.className='field';
-  jourField.innerHTML = `<label>Jour</label>`;
-  const jourInput = document.createElement('input');
-  jourInput.type='number'; jourInput.className='num'; jourInput.value = store.jour;
-
-  const nuitField = document.createElement('div'); nuitField.className='field';
-  nuitField.innerHTML = `<label>Nuit</label>`;
-  const nuitInput = document.createElement('input');
-  nuitInput.type='number'; nuitInput.className='num'; nuitInput.value = store.nuit;
 
   function recalcJourNuitTaxes(){
     const total = round2((Number(store.jour)||0) + (Number(store.nuit)||0));
     const b = taxBreakdown(total);
     store.cash = {total, subtotal:b.subtotal, tps:b.tps, tvq:b.tvq};
   }
-  jourInput.addEventListener('input', ()=>{ store.jour = jourInput.value; recalcJourNuitTaxes(); });
-  nuitInput.addEventListener('input', ()=>{ store.nuit = nuitInput.value; recalcJourNuitTaxes(); });
+
+  if(shiftType === 'bartDay'){
+    const jourField = document.createElement('div'); jourField.className='field';
+    jourField.innerHTML = `<label>Jour</label>`;
+    const jourInput = document.createElement('input');
+    jourInput.type='number'; jourInput.className='num'; jourInput.value = store.jour;
+    jourInput.addEventListener('input', ()=>{ store.jour = jourInput.value; recalcJourNuitTaxes(); });
+    jourField.appendChild(jourInput);
+    jnRow.appendChild(jourField);
+  } else {
+    const nuitField = document.createElement('div'); nuitField.className='field';
+    nuitField.innerHTML = `<label>Nuit</label>`;
+    const nuitInput = document.createElement('input');
+    nuitInput.type='number'; nuitInput.className='num'; nuitInput.value = store.nuit;
+    nuitInput.addEventListener('input', ()=>{ store.nuit = nuitInput.value; recalcJourNuitTaxes(); });
+    nuitField.appendChild(nuitInput);
+    jnRow.appendChild(nuitField);
+  }
   recalcJourNuitTaxes(); // keep store.cash in sync even before any edit this session
 
-  jourField.appendChild(jourInput); nuitField.appendChild(nuitInput);
-  jnRow.appendChild(jourField); jnRow.appendChild(nuitField);
   wrap.appendChild(jnRow);
 
   const taxesInfo = document.createElement('div');
