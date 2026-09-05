@@ -561,7 +561,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 1 (le proprio remplit lui-même les formulaires papier)</p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v1.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1154,7 +1154,7 @@ function buildInventorySheet(){
   const weekLabel = weekSelect.options[weekSelect.selectedIndex].textContent;
   wrap.innerHTML = `
     <h2>#5 Inventory Summary</h2>
-    <div class="sub">${weekLabel} — Start = Debut + livraison lundi + livraison jeudi. Fin = Start − total vendu de la semaine (Fin jour + Fin soir + Ajouté de l'Inventaire Journalier). Debut lui-même n'a pas encore de source, donc Start/Fin restent "?" pour l'instant.</div>
+    <div class="sub no-print">${weekLabel} — Start = Debut + livraison lundi + livraison jeudi. Fin = Start − total vendu de la semaine (Fin jour + Fin soir + Ajouté de l'Inventaire Journalier). Debut lui-même n'a pas encore de source, donc Start/Fin restent "?" pour l'instant.</div>
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
@@ -1260,7 +1260,7 @@ function buildInventorySheet(){
   // col6=Jeudi, col7=Vendredi, col8=Samedi, col9=Dimanche, col10=Fin
 
   const h1 = document.createElement('div');
-  h1.className = 'sub'; h1.style.marginTop = '4px';
+  h1.className = 'sub no-print'; h1.style.marginTop = '4px';
   h1.textContent = 'Start / semaine / Fin — 9 bières × 9 colonnes';
   wrap.appendChild(h1);
 
@@ -1310,29 +1310,6 @@ function buildInventorySheet(){
     cellIn(g2,row,9, anyUnknown?'?':round2(total), anyUnknown?'pg-unknown':'pg-calc');
   });
   wrap.appendChild(g2);
-
-  const h3 = document.createElement('div');
-  h3.className = 'sub'; h3.style.marginTop = '22px';
-  h3.textContent = 'Vendu, jour par jour — Fin jour + Fin soir + Inventaire Journalier (différent de l\'Ajouté ci-dessus)';
-  wrap.appendChild(h3);
-
-  const g3 = grid();
-  cellIn(g3,1,1,'','pg-header');
-  dayNames.forEach((d,i)=> cellIn(g3,1,2+i,d,'pg-header'));
-  cellIn(g3,1,9,'Total','pg-header');
-  items.forEach((item,i)=>{
-    const row = 2+i;
-    cellIn(g3,row,1,item,'pg-label');
-    const perDay = finByItem[item];
-    perDay.forEach((v,ci)=>{
-      if(v===null) cellIn(g3,row,2+ci,'?','pg-unknown');
-      else cellIn(g3,row,2+ci, round2(v), 'pg-calc', 'Fin jour + Fin soir (Stock du quart) + Ajouté (Inventaire Journalier) pour cette journée.');
-    });
-    const anyUnknown = perDay.some(v=>v===null);
-    const total = perDay.reduce((s,v)=> s+(v||0), 0);
-    cellIn(g3,row,9, anyUnknown?'?':round2(total), anyUnknown?'pg-unknown':'pg-calc', 'Somme des 7 jours ci-dessus — c\'est cette valeur qui apparaît comme "Vendu" dans le tableau du dessus.');
-  });
-  wrap.appendChild(g3);
 
   wrap.appendChild(buildBottomBar());
   return wrap;
@@ -1505,12 +1482,12 @@ function buildOverallSheet(){
 
   wrap.appendChild(grid);
   const flagNote = document.createElement('div');
-  flagNote.className='stub'; flagNote.style.padding='10px 0 0';
+  flagNote.className='stub no-print'; flagNote.style.padding='10px 0 0';
   flagNote.innerHTML = `<strong>3 cellules à vérifier avec le proprio :</strong> "Reste Env" (fichier original pointe vers l'étiquette texte "ENV" plutôt que sa vraie valeur — j'ai corrigé pour utiliser la vraie valeur, à confirmer). Le "Total" tout en bas (lower-right) additionnait une cellule vide sans lien apparent — retiré, à confirmer que ce n'était pas voulu. "Over Pool" (les deux endroits) pointait vers la même source que "Over Poker" — probablement une erreur de copier-coller, laissé en pause comme tu l'avais demandé.`;
   wrap.appendChild(flagNote);
   if(!readingKnown){
     const note = document.createElement('div');
-    note.className='stub'; note.style.padding='10px 0 0';
+    note.className='stub no-print'; note.style.padding='10px 0 0';
     note.textContent = "Reading (onglet Sunday) pas encore rempli — le Vente/Semaine de Schneider reste \"?\".";
     wrap.appendChild(note);
   }
@@ -1646,7 +1623,7 @@ function buildTransactionSheet(){
   wrap.appendChild(grid);
 
   const note = document.createElement('div');
-  note.className = 'stub'; note.style.padding = '10px 0 0';
+  note.className = 'stub no-print'; note.style.padding = '10px 0 0';
   let msg = "";
   if(!meHasShift) msg += "Aucun quart pris par 'Me' cette semaine — les valeurs Schneider Over/TPS/TVQ/Interac sont à 0.";
   if(!readingKnown) msg += (msg?" ":"") + "Reading (Sunday) pas encore rempli — l'Argent de Schneider et le Total général restent \"?\".";
@@ -1791,6 +1768,7 @@ function buildPokerSheet(){
   const autoValue = (prevWk && prevWk.depart!==null) ? prevWk.depart : null;
 
   const g1Box = document.createElement('div');
+  g1Box.className = 'no-print';
   g1Box.style.cssText = 'margin:6px 0 20px; font-family:"Avenir Next","Segoe UI",sans-serif;';
   const g1LabelTop = document.createElement('label');
   g1LabelTop.style.cssText = 'display:block; font-size:0.78rem; color:var(--ink-soft); margin-bottom:5px;';
