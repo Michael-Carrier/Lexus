@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.6</title>
+<title>Registre du bar v2.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.5</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -3329,18 +3329,40 @@ let askAiChartInstance = null;
 
 // Fixed template — Claude only ever supplies data (type/title/labels/values/legend).
 // Colors, sizing, and styling stay consistent across every chart, and never cost extra.
-const CHART_PALETTE = ['#8C5A2B','#6E4520','#4F7A3B','#2E4A5E','#A566B8','#B0402A','#C98BD9'];
+// A rotating cursor means consecutive default-color charts don't all start on the same color,
+// and single-series bar charts get one color per bar instead of one flat color for everything.
+const CHART_PALETTE = ['#8C5A2B','#4F7A3B','#2E4A5E','#A566B8','#B0402A','#C98BD9','#6E4520'];
+let chartColorCursor = 0;
 function renderChart(spec){
   if(askAiChartInstance){ askAiChartInstance.destroy(); askAiChartInstance = null; }
   askAiChartWrap.style.display = 'block';
-  const datasets = (spec.datasets||[]).map((ds,i)=>({
-    label: ds.label,
-    data: ds.data,
-    backgroundColor: spec.type==='pie' ? CHART_PALETTE : CHART_PALETTE[i % CHART_PALETTE.length],
-    borderColor: CHART_PALETTE[i % CHART_PALETTE.length],
-    borderWidth: spec.type==='line' ? 2 : 1,
-    fill: false
-  }));
+
+  const singleBar = spec.type === 'bar' && (spec.datasets||[]).length === 1;
+  const datasets = (spec.datasets||[]).map((ds,i)=>{
+    let bg, border;
+    if(ds.color){
+      bg = ds.color; border = ds.color;
+    } else if(spec.type === 'pie'){
+      bg = CHART_PALETTE; border = CHART_PALETTE;
+    } else if(singleBar){
+      // One color per bar, cycling the full palette, so a single series isn't flat/monochrome.
+      bg = ds.data.map((_,di)=> CHART_PALETTE[(chartColorCursor+di) % CHART_PALETTE.length]);
+      border = bg;
+    } else {
+      const c = CHART_PALETTE[(chartColorCursor+i) % CHART_PALETTE.length];
+      bg = c; border = c;
+    }
+    return {
+      label: ds.label,
+      data: ds.data,
+      backgroundColor: bg,
+      borderColor: border,
+      borderWidth: spec.type==='line' ? 2 : 1,
+      fill: false
+    };
+  });
+  chartColorCursor = (chartColorCursor + Math.max(datasets.length,1)) % CHART_PALETTE.length;
+
   askAiChartInstance = new Chart(askAiChartCanvas, {
     type: spec.type,
     data: { labels: spec.labels, datasets },
