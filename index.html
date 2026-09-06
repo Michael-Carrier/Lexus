@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.4</title>
+<title>Registre du bar v2.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
   :root{
     --paper:#F3EFE7;
@@ -586,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.2</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.3</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -600,10 +601,14 @@
 <div id="askAiBox" class="no-print" style="display:none;">
   <label class="login-label" style="margin-top:0;">Demander à l'IA (Boss)</label>
   <div style="display:flex; gap:8px;">
-    <input type="text" id="askAiInput" placeholder="ex: Combien Tanya a vendu ce mois-ci?">
+    <input type="text" id="askAiInput" placeholder="ex: Combien Tanya a vendu ce mois-ci? / Fais un graphique de...">
     <button id="askAiBtn" class="primary">Demander</button>
   </div>
   <div id="askAiAnswer"></div>
+  <div id="askAiChartWrap" style="display:none;">
+    <canvas id="askAiChart" style="max-width:100%;"></canvas>
+    <button id="askAiChartDownload" class="print-btn" style="margin-top:8px;">Télécharger le graphique</button>
+  </div>
 </div>
 
 <div id="prefsModal" class="no-print" style="display:none;">
@@ -3310,12 +3315,55 @@ const ASK_AI_URL = 'https://tbnblorbmxthkbbdtekg.supabase.co/functions/v1/rapid-
 const askAiInput = document.getElementById('askAiInput');
 const askAiBtn = document.getElementById('askAiBtn');
 const askAiAnswer = document.getElementById('askAiAnswer');
+const askAiChartWrap = document.getElementById('askAiChartWrap');
+const askAiChartCanvas = document.getElementById('askAiChart');
+const askAiChartDownload = document.getElementById('askAiChartDownload');
+let askAiChartInstance = null;
+
+// Fixed template — Claude only ever supplies data (type/title/labels/values/legend).
+// Colors, sizing, and styling stay consistent across every chart, and never cost extra.
+const CHART_PALETTE = ['#8C5A2B','#6E4520','#4F7A3B','#2E4A5E','#A566B8','#B0402A','#C98BD9'];
+function renderChart(spec){
+  if(askAiChartInstance){ askAiChartInstance.destroy(); askAiChartInstance = null; }
+  askAiChartWrap.style.display = 'block';
+  const datasets = (spec.datasets||[]).map((ds,i)=>({
+    label: ds.label,
+    data: ds.data,
+    backgroundColor: spec.type==='pie' ? CHART_PALETTE : CHART_PALETTE[i % CHART_PALETTE.length],
+    borderColor: CHART_PALETTE[i % CHART_PALETTE.length],
+    borderWidth: spec.type==='line' ? 2 : 1,
+    fill: false
+  }));
+  askAiChartInstance = new Chart(askAiChartCanvas, {
+    type: spec.type,
+    data: { labels: spec.labels, datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        title: { display: true, text: spec.title || '' },
+        legend: { display: datasets.length > 1 || spec.type === 'pie' }
+      },
+      scales: spec.type === 'pie' ? {} : {
+        x: { title: { display: !!spec.xAxisLabel, text: spec.xAxisLabel || '' } },
+        y: { title: { display: !!spec.yAxisLabel, text: spec.yAxisLabel || '' }, beginAtZero: true }
+      }
+    }
+  });
+}
+askAiChartDownload.addEventListener('click', ()=>{
+  if(!askAiChartInstance) return;
+  const a = document.createElement('a');
+  a.href = askAiChartCanvas.toDataURL('image/png');
+  a.download = 'graphique.png';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+});
 
 async function askAi(){
   const question = askAiInput.value.trim();
   if(!question) return;
   askAiAnswer.className = 'loading';
   askAiAnswer.textContent = 'Réflexion en cours...';
+  askAiChartWrap.style.display = 'none';
   askAiBtn.disabled = true;
   try{
     const res = await fetch(ASK_AI_URL, {
@@ -3333,7 +3381,8 @@ async function askAi(){
       askAiAnswer.textContent = 'Erreur: ' + result.error;
     } else {
       askAiAnswer.className = '';
-      askAiAnswer.textContent = result.answer;
+      askAiAnswer.textContent = result.answer || '';
+      if(result.chart) renderChart(result.chart);
     }
   }catch(e){
     askAiAnswer.className = 'error';
