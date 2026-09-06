@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.8</title>
+<title>Registre du bar v2.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.7</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.8</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1223,7 +1223,10 @@ function buildInventorySheet(){
     const idx = deliveryRowIndex(alias);
     if(idx===-1) return null;
     const r = bucket.delivery?.[`row${idx}`];
-    return r && r.cases ? Number(r.cases)*24 : 0;
+    if(!r) return 0;
+    // A manually-corrected total (e.g. a short case) takes priority over cases × 24.
+    if(r.totalManual && r.total !== "" && r.total !== undefined) return Number(r.total);
+    return r.cases ? Number(r.cases)*24 : 0;
   }
 
   // Sold(day,item) = Hier (confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté janitor.
@@ -2500,7 +2503,7 @@ function buildStockSection(shiftType, bucket){
   if(state.role === 'barmaid'){
     mainThead += `<tr class="no-print"><td></td><td style="text-align:center; padding:2px;"><label style="font-size:0.68rem; display:flex; align-items:center; gap:3px; justify-content:center; cursor:pointer; color:var(--ink-soft);"><input type="checkbox" id="autofillDebut_${shiftType}" style="margin:0;"> Auto</label></td><td colspan="4"></td></tr>`;
   }
-  mainThead += `<tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin</th><th>Vendu (calculé)</th></tr></thead>`;
+  mainThead += `<tr><th>Marque</th><th>Début</th><th>Ajout</th><th>Fin</th><th>Vendu (calculé)</th></tr></thead>`;
   mainTable.innerHTML = mainThead;
   const mainBody = document.createElement('tbody'); mainTable.appendChild(mainBody);
 
@@ -2519,7 +2522,7 @@ function buildStockSection(shiftType, bucket){
       return;
     }
     const key = `row${idx}`;
-    if(!store.stock[key]) store.stock[key] = { debut:"", ajoutCases:"", ajoutBeers:"", fin:"", total:"", debutManual:false };
+    if(!store.stock[key]) store.stock[key] = { debut:"", ajoutBeers:"", fin:"", total:"", debutManual:false };
     const rowStore = store.stock[key];
     rowStores[key] = rowStore;
 
@@ -2542,13 +2545,9 @@ function buildStockSection(shiftType, bucket){
     inDebut.type='number'; inDebut.className='num'; inDebut.value = rowStore.debut;
     debutInputs[key] = inDebut;
 
-    const tdCases = document.createElement('td');
-    const inCases = document.createElement('input');
-    inCases.type='number'; inCases.className='num'; inCases.step='1'; inCases.min='0'; inCases.value = rowStore.ajoutCases;
-
     const tdBeers = document.createElement('td');
     const inBeers = document.createElement('input');
-    inBeers.type='number'; inBeers.className='num calc'; inBeers.value = rowStore.ajoutBeers;
+    inBeers.type='number'; inBeers.className='num'; inBeers.value = rowStore.ajoutBeers;
 
     const tdFin = document.createElement('td');
     const inFin = document.createElement('input');
@@ -2570,19 +2569,13 @@ function buildStockSection(shiftType, bucket){
       inTotal.classList.toggle('mismatch-cell', mismatch);
     }
     inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; rowStore.debutManual = true; recalcTotal(); refreshRow(key); });
-    inCases.addEventListener('input', ()=>{
-      rowStore.ajoutCases = inCases.value;
-      rowStore.ajoutBeers = inCases.value === "" ? "" : round2(Number(inCases.value)*24);
-      inBeers.value = rowStore.ajoutBeers;
-      recalcTotal();
-    });
     inBeers.addEventListener('input', ()=>{ rowStore.ajoutBeers = inBeers.value; recalcTotal(); });
     inFin.addEventListener('input', ()=>{ rowStore.fin = inFin.value; recalcTotal(); });
     inTotal.addEventListener('input', ()=>{ rowStore.total = inTotal.value; checkTotalOverride(); });
 
-    tdDebut.appendChild(inDebut); tdCases.appendChild(inCases); tdBeers.appendChild(inBeers);
+    tdDebut.appendChild(inDebut); tdBeers.appendChild(inBeers);
     tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
-    trM.appendChild(tdName); trM.appendChild(tdDebut); trM.appendChild(tdCases); trM.appendChild(tdBeers);
+    trM.appendChild(tdName); trM.appendChild(tdDebut); trM.appendChild(tdBeers);
     trM.appendChild(tdFin); trM.appendChild(tdTotal);
     mainBody.appendChild(trM);
 
@@ -2848,7 +2841,7 @@ function buildDeliveryPanel(){
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <h2>Beer Delivery</h2>
-    <div class="sub">${state.day} — actif seulement les lundis et jeudis. Nombre de caisses; le total se calcule tout seul (× 24).</div>
+    <div class="sub">${state.day} — actif seulement les lundis et jeudis. Nombre de caisses; le total se calcule par défaut (× 24), mais peut être corrigé si une caisse n'est pas complète.</div>
   `;
   const table = document.createElement('table');
   table.className = 'form-table';
@@ -2859,7 +2852,8 @@ function buildDeliveryPanel(){
     const tr = document.createElement('tr');
     if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="3"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
-    if(!store[key]) store[key] = { cases:"" };
+    if(!store[key]) store[key] = { cases:"", total:"", totalManual:false };
+    if(store[key].totalManual === undefined) store[key].totalManual = false; // upgrade older saved rows
 
     const tdName = document.createElement('td'); tdName.textContent = item.name;
     const tdCases = document.createElement('td');
@@ -2868,12 +2862,22 @@ function buildDeliveryPanel(){
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
-    inTotal.type='text'; inTotal.className='num calc'; inTotal.readOnly = true;
-    inTotal.value = store[key].cases ? (Number(store[key].cases)*24) : "";
+    inTotal.type='number'; inTotal.className='num';
+    if(!store[key].totalManual){
+      store[key].total = store[key].cases ? round2(Number(store[key].cases)*24) : "";
+    }
+    inTotal.value = store[key].total;
 
     inCases.addEventListener('input', ()=>{
       store[key].cases = inCases.value;
-      inTotal.value = store[key].cases ? (Number(store[key].cases)*24) : "";
+      if(!store[key].totalManual){
+        store[key].total = store[key].cases ? round2(Number(store[key].cases)*24) : "";
+        inTotal.value = store[key].total;
+      }
+    });
+    inTotal.addEventListener('input', ()=>{
+      store[key].total = inTotal.value;
+      store[key].totalManual = true; // stop auto-recalculating once corrected by hand
     });
 
     tdCases.appendChild(inCases);
