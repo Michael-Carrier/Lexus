@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.3</title>
+<title>Registre du bar v2.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -586,7 +586,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.1</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.2</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -2398,6 +2398,7 @@ function buildStockSection(shiftType, bucket){
   const h = document.createElement('h2');
   h.textContent = 'Stock du quart';
   h.style.cssText = 'font-size:1.1rem; margin:0;';
+  const canSeeNext = state.role === 'boss';
   const rightNavBtn = document.createElement('button');
   rightNavBtn.className = 'print-btn';
   rightNavBtn.textContent = isDay ? "Quart de Soir →" : "Inventaire →";
@@ -2405,7 +2406,8 @@ function buildStockSection(shiftType, bucket){
     state.tab = isDay ? 'bartNight' : 'inventaire';
     renderTabs(); renderPanel();
   });
-  headingRow.appendChild(leftNavBtn); headingRow.appendChild(h); headingRow.appendChild(rightNavBtn);
+  headingRow.appendChild(leftNavBtn); headingRow.appendChild(h);
+  if(canSeeNext) headingRow.appendChild(rightNavBtn);
   section.appendChild(headingRow);
 
   const sub = document.createElement('div');
@@ -2419,7 +2421,7 @@ function buildStockSection(shiftType, bucket){
 
   let yesterdayInventaire = null; // only fetched for the Day shift (may cross into last week)
 
-  const leftVals = {}, rightVals = {}, rowStores = {}, debutInputs = {}, leftCellEls = {}, rightCellEls = {};
+  const leftVals = {}, rightVals = {}, rowStores = {}, debutInputs = {}, totalInputEls = {}, leftCellEls = {}, rightCellEls = {};
 
   function computeLeftValue(key){
     if(isDay){
@@ -2462,7 +2464,12 @@ function buildStockSection(shiftType, bucket){
 
   const mainTable = document.createElement('table'); mainTable.className = 'form-table stock-align-table';
   mainTable.style.flex = '1 1 auto';
-  mainTable.innerHTML = `<thead><tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
+  let mainThead = '<thead>';
+  if(state.role === 'barmaid'){
+    mainThead += `<tr class="no-print"><td></td><td style="text-align:center; padding:2px;"><label style="font-size:0.68rem; display:flex; align-items:center; gap:3px; justify-content:center; cursor:pointer; color:var(--ink-soft);"><input type="checkbox" id="autofillDebut_${shiftType}" style="margin:0;"> Auto</label></td><td colspan="4"></td></tr>`;
+  }
+  mainThead += `<tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
+  mainTable.innerHTML = mainThead;
   const mainBody = document.createElement('tbody'); mainTable.appendChild(mainBody);
 
   const rightTable = document.createElement('table'); rightTable.className = 'form-table stock-align-table';
@@ -2518,10 +2525,17 @@ function buildStockSection(shiftType, bucket){
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num calc'; inTotal.value = rowStore.total;
+    totalInputEls[key] = inTotal;
 
     function recalcTotal(){
       rowStore.total = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       inTotal.value = rowStore.total;
+      inTotal.classList.remove('mismatch-cell'); // recalculated automatically, so it matches again by construction
+    }
+    function checkTotalOverride(){
+      const expected = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
+      const mismatch = numOrZero(rowStore.total) !== expected;
+      inTotal.classList.toggle('mismatch-cell', mismatch);
     }
     inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; rowStore.debutManual = true; recalcTotal(); refreshRow(key); });
     inCases.addEventListener('input', ()=>{
@@ -2532,7 +2546,7 @@ function buildStockSection(shiftType, bucket){
     });
     inBeers.addEventListener('input', ()=>{ rowStore.ajoutBeers = inBeers.value; recalcTotal(); });
     inFin.addEventListener('input', ()=>{ rowStore.fin = inFin.value; recalcTotal(); });
-    inTotal.addEventListener('input', ()=>{ rowStore.total = inTotal.value; });
+    inTotal.addEventListener('input', ()=>{ rowStore.total = inTotal.value; checkTotalOverride(); });
 
     tdDebut.appendChild(inDebut); tdCases.appendChild(inCases); tdBeers.appendChild(inBeers);
     tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
@@ -2546,8 +2560,28 @@ function buildStockSection(shiftType, bucket){
     rightCellEls[key] = tdR; trR.appendChild(tdR); rightBody.appendChild(trR);
   });
 
-  flexWrap.appendChild(leftTable); flexWrap.appendChild(mainTable); flexWrap.appendChild(rightTable);
+  flexWrap.appendChild(leftTable); flexWrap.appendChild(mainTable);
+  if(canSeeNext) flexWrap.appendChild(rightTable);
   section.appendChild(flexWrap);
+
+  if(state.role === 'barmaid'){
+    const autofillCheck = mainTable.querySelector(`#autofillDebut_${shiftType}`);
+    autofillCheck.addEventListener('change', ()=>{
+      if(!autofillCheck.checked) return;
+      Object.keys(rowStores).forEach(key=>{
+        const auto = computeLeftValue(key);
+        if(auto === undefined) return; // still loading, skip
+        const rowStore = rowStores[key];
+        rowStore.debut = auto;
+        rowStore.debutManual = false;
+        if(debutInputs[key]) debutInputs[key].value = auto;
+        rowStore.total = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
+        if(totalInputEls[key]){ totalInputEls[key].value = rowStore.total; totalInputEls[key].classList.remove('mismatch-cell'); }
+        refreshRow(key);
+      });
+      autofillCheck.checked = false; // one-time action, not a persisted mode
+    });
+  }
 
   if(isDay){
     fetchInventaireDay(prevRef.weekKey, prevRef.day).then(items=>{
