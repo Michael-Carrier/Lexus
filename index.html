@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.7</title>
+<title>Registre du bar v2.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.5</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -656,7 +656,7 @@ const inventaireItems = [
   {name:"Budweiser", expected:96}, {name:"Bud Light", expected:48},
   {name:"Bleu", expected:32}, {name:"Labatt 50", expected:24},
   {name:"Mich. Ultra", expected:24}, {name:"Corona 0%", expected:24},
-  {name:"Corona", expected:48}, {name:"White Claw", expected:"?"},
+  {name:"Corona", expected:48}, {name:"White Claw", expected:40},
   {spacer:true}, {spacer:true},
   {name:"Biere inter", expected:40}, {name:"Smirnoff Ice", expected:8},
   {name:"Red Bull", expected:16}, {name:"Rev", expected:8},
@@ -2283,54 +2283,78 @@ function buildShiftPanel(shiftType){
     secondRow.style.display = secondCheck.checked ? 'flex' : 'none';
   });
 
-  // Over
-  const overField = document.createElement('div'); overField.className='field standalone';
-  overField.innerHTML = `<label>Over (argent au début du quart)</label>`;
-  const overInput = document.createElement('input');
-  overInput.type='number'; overInput.className='num'; overInput.value = store.over;
-  overInput.addEventListener('input', ()=>{ store.over = overInput.value; });
-  overField.appendChild(overInput);
-  wrap.appendChild(overField);
+  // Financial section (Over, Jour/Nuit, Interac, Argent, Taxes) — Boss only.
+  // Barmaid only ever sees shift info + Stock du quart, nothing financial.
+  if(state.role === 'boss'){
+    // Over
+    const overField = document.createElement('div'); overField.className='field standalone';
+    overField.innerHTML = `<label>Over (argent au début du quart)</label>`;
+    const overInput = document.createElement('input');
+    overInput.type='number'; overInput.className='num'; overInput.value = store.over;
+    overInput.addEventListener('input', ()=>{ store.over = overInput.value; });
+    overField.appendChild(overInput);
+    wrap.appendChild(overField);
 
-  // Only show the field matching this form's own shift — Day shift form gets Jour,
-  // Night shift form gets Nuit. Taxes still compute off whichever one is filled in.
-  const jnRow = document.createElement('div');
-  jnRow.className = 'shift-row';
+    // Row: Jour (or Nuit) | Interac | Argent (greyed, calculated)
+    const jnRow = document.createElement('div');
+    jnRow.className = 'shift-row';
 
-  function recalcJourNuitTaxes(){
-    const total = round2((Number(store.jour)||0) + (Number(store.nuit)||0));
-    const b = taxBreakdown(total);
-    store.cash = {total, subtotal:b.subtotal, tps:b.tps, tvq:b.tvq};
+    const jnField = document.createElement('div'); jnField.className='field';
+    jnField.innerHTML = `<label>${shiftType==='bartDay' ? 'Jour' : 'Nuit'}</label>`;
+    const jnInput = document.createElement('input');
+    jnInput.type='number'; jnInput.className='num';
+    jnInput.value = shiftType==='bartDay' ? store.jour : store.nuit;
+
+    const interacField = document.createElement('div'); interacField.className='field';
+    interacField.innerHTML = `<label>Interac</label>`;
+    const interacInput = document.createElement('input');
+    interacInput.type='number'; interacInput.className='num'; interacInput.value = store.interac.total;
+
+    const argentField = document.createElement('div'); argentField.className='field';
+    argentField.innerHTML = `<label>Argent</label>`;
+    const argentDisplay = document.createElement('input');
+    argentDisplay.type='number'; argentDisplay.className='num calc'; argentDisplay.readOnly = true;
+
+    // Row: TPS | TVQ (no sous-total — reverse-calculated from Jour/Nuit only, never Interac)
+    const taxRow = document.createElement('div');
+    taxRow.className = 'shift-row'; taxRow.style.marginTop = '4px';
+    const tpsField = document.createElement('div'); tpsField.className='field';
+    tpsField.innerHTML = `<label>TPS (5%)</label>`;
+    const tpsDisplay = document.createElement('input');
+    tpsDisplay.type='number'; tpsDisplay.className='num calc'; tpsDisplay.readOnly = true;
+    const tvqField = document.createElement('div'); tvqField.className='field';
+    tvqField.innerHTML = `<label>TVQ (9.975%)</label>`;
+    const tvqDisplay = document.createElement('input');
+    tvqDisplay.type='number'; tvqDisplay.className='num calc'; tvqDisplay.readOnly = true;
+
+    function recalcFinancials(){
+      const jourNuitVal = Number(shiftType==='bartDay' ? store.jour : store.nuit) || 0;
+      const interacVal = Number(store.interac.total) || 0;
+      const argent = round2(jourNuitVal - interacVal);
+      argentDisplay.value = argent;
+
+      const b = taxBreakdown(jourNuitVal);
+      store.cash = { total: jourNuitVal, subtotal: b.subtotal, tps: b.tps, tvq: b.tvq };
+      tpsDisplay.value = b.tps;
+      tvqDisplay.value = b.tvq;
+      // Interac no longer carries its own tax breakdown — only its total matters now.
+      store.interac.subtotal = ""; store.interac.tps = ""; store.interac.tvq = "";
+    }
+    jnInput.addEventListener('input', ()=>{
+      if(shiftType==='bartDay') store.jour = jnInput.value; else store.nuit = jnInput.value;
+      recalcFinancials();
+    });
+    interacInput.addEventListener('input', ()=>{ store.interac.total = interacInput.value; recalcFinancials(); });
+    recalcFinancials();
+
+    jnField.appendChild(jnInput); interacField.appendChild(interacInput); argentField.appendChild(argentDisplay);
+    jnRow.appendChild(jnField); jnRow.appendChild(interacField); jnRow.appendChild(argentField);
+    wrap.appendChild(jnRow);
+
+    tpsField.appendChild(tpsDisplay); tvqField.appendChild(tvqDisplay);
+    taxRow.appendChild(tpsField); taxRow.appendChild(tvqField);
+    wrap.appendChild(taxRow);
   }
-
-  if(shiftType === 'bartDay'){
-    const jourField = document.createElement('div'); jourField.className='field';
-    jourField.innerHTML = `<label>Jour</label>`;
-    const jourInput = document.createElement('input');
-    jourInput.type='number'; jourInput.className='num'; jourInput.value = store.jour;
-    jourInput.addEventListener('input', ()=>{ store.jour = jourInput.value; recalcJourNuitTaxes(); });
-    jourField.appendChild(jourInput);
-    jnRow.appendChild(jourField);
-  } else {
-    const nuitField = document.createElement('div'); nuitField.className='field';
-    nuitField.innerHTML = `<label>Nuit</label>`;
-    const nuitInput = document.createElement('input');
-    nuitInput.type='number'; nuitInput.className='num'; nuitInput.value = store.nuit;
-    nuitInput.addEventListener('input', ()=>{ store.nuit = nuitInput.value; recalcJourNuitTaxes(); });
-    nuitField.appendChild(nuitInput);
-    jnRow.appendChild(nuitField);
-  }
-  recalcJourNuitTaxes(); // keep store.cash in sync even before any edit this session
-
-  wrap.appendChild(jnRow);
-
-  const taxesInfo = document.createElement('div');
-  taxesInfo.className = 'sub'; taxesInfo.style.marginTop = '-10px'; taxesInfo.style.marginBottom = '14px';
-  taxesInfo.textContent = `Taxes calculées automatiquement sur Jour + Nuit — TPS: ${store.cash.tps}, TVQ: ${store.cash.tvq}`;
-  wrap.appendChild(taxesInfo);
-
-  // Interac tax block (unchanged — separate from Jour/Nuit)
-  wrap.appendChild(buildTaxBlock("Interac", store.interac));
 
   if(store.needsReview){
     const pendingNote = document.createElement('div');
@@ -2418,7 +2442,7 @@ function buildStockSection(shiftType, bucket){
 
   const sub = document.createElement('div');
   sub.className = 'sub';
-  sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (vendu), Total (calculé). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
+  sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
   section.appendChild(sub);
 
   // Empty ("") or missing = treated as 0 for comparisons, per your instruction — only a
@@ -2434,7 +2458,9 @@ function buildStockSection(shiftType, bucket){
       if(yesterdayInventaire === null) return undefined; // loading
       return numOrZero(yesterdayInventaire[key]?.total);
     }
-    return numOrZero(bucket.bartDay?.stock?.[key]?.total);
+    // Fin = actual beers physically left in the fridge — that's what should chain into
+    // the next shift's Début, not Total (which now means the calculated Vendu amount).
+    return numOrZero(bucket.bartDay?.stock?.[key]?.fin);
   }
   function computeRightValue(key){
     if(isDay) return numOrZero(bucket.bartNight?.stock?.[key]?.debut);
@@ -2465,7 +2491,7 @@ function buildStockSection(shiftType, bucket){
 
   const leftTable = document.createElement('table'); leftTable.className = 'form-table stock-align-table';
   leftTable.style.cssText = 'flex:0 0 90px; background:#EDEAE2;';
-  leftTable.innerHTML = `<thead><tr><th title="${isDay ? "Hier — Inventaire (Nouveau total)" : "Aujourd'hui — Jour (Total)"}">${isDay ? "Hier" : "Jour"}</th></tr></thead>`;
+  leftTable.innerHTML = `<thead><tr><th title="${isDay ? "Hier — Inventaire (Nouveau total)" : "Aujourd'hui — Jour (Fin)"}">${isDay ? "Hier" : "Jour"}</th></tr></thead>`;
   const leftBody = document.createElement('tbody'); leftTable.appendChild(leftBody);
 
   const mainTable = document.createElement('table'); mainTable.className = 'form-table stock-align-table';
@@ -2474,7 +2500,7 @@ function buildStockSection(shiftType, bucket){
   if(state.role === 'barmaid'){
     mainThead += `<tr class="no-print"><td></td><td style="text-align:center; padding:2px;"><label style="font-size:0.68rem; display:flex; align-items:center; gap:3px; justify-content:center; cursor:pointer; color:var(--ink-soft);"><input type="checkbox" id="autofillDebut_${shiftType}" style="margin:0;"> Auto</label></td><td colspan="4"></td></tr>`;
   }
-  mainThead += `<tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin (vendu)</th><th>Total</th></tr></thead>`;
+  mainThead += `<tr><th>Marque</th><th>Début</th><th>Ajout — caisses</th><th>Ajout — bières</th><th>Fin</th><th>Vendu (calculé)</th></tr></thead>`;
   mainTable.innerHTML = mainThead;
   const mainBody = document.createElement('tbody'); mainTable.appendChild(mainBody);
 
@@ -2601,54 +2627,6 @@ function buildStockSection(shiftType, bucket){
   return section;
 }
 
-function buildTaxBlock(title, store){
-  const block = document.createElement('div');
-  block.className = 'tax-block';
-  const h = document.createElement('div'); h.className='tax-title'; h.textContent = title;
-  block.appendChild(h);
-
-  const row = document.createElement('div'); row.className = 'tax-row';
-
-  const totalField = document.createElement('div'); totalField.className='field';
-  totalField.innerHTML = `<label>Total (taxes incl.)</label>`;
-  const totalInput = document.createElement('input');
-  totalInput.type='number'; totalInput.className='num'; totalInput.value = store.total;
-
-  const subField = document.createElement('div'); subField.className='field';
-  subField.innerHTML = `<label>Sous-total</label>`;
-  const subInput = document.createElement('input');
-  subInput.type='number'; subInput.className='num calc'; subInput.value = store.subtotal;
-  subInput.addEventListener('input', ()=>{ store.subtotal = subInput.value; });
-
-  const tpsField = document.createElement('div'); tpsField.className='field';
-  tpsField.innerHTML = `<label>TPS (5%)</label>`;
-  const tpsInput = document.createElement('input');
-  tpsInput.type='number'; tpsInput.className='num calc'; tpsInput.value = store.tps;
-  tpsInput.addEventListener('input', ()=>{ store.tps = tpsInput.value; });
-
-  const tvqField = document.createElement('div'); tvqField.className='field';
-  tvqField.innerHTML = `<label>TVQ (9.975%)</label>`;
-  const tvqInput = document.createElement('input');
-  tvqInput.type='number'; tvqInput.className='num calc'; tvqInput.value = store.tvq;
-  tvqInput.addEventListener('input', ()=>{ store.tvq = tvqInput.value; });
-
-  totalInput.addEventListener('input', ()=>{
-    store.total = totalInput.value;
-    const b = taxBreakdown(totalInput.value);
-    store.subtotal = b.subtotal; store.tps = b.tps; store.tvq = b.tvq;
-    subInput.value = b.subtotal; tpsInput.value = b.tps; tvqInput.value = b.tvq;
-  });
-
-  totalField.appendChild(totalInput);
-  subField.appendChild(subInput);
-  tpsField.appendChild(tpsInput);
-  tvqField.appendChild(tvqInput);
-
-  row.appendChild(totalField); row.appendChild(subField); row.appendChild(tpsField); row.appendChild(tvqField);
-  block.appendChild(row);
-  return block;
-}
-
 function buildInventairePanel(){
   const bucket = ensureBucket();
   if(!bucket.inventaire) bucket.inventaire = {};
@@ -2676,29 +2654,30 @@ function buildInventairePanel(){
 
   const subDiv = document.createElement('div');
   subDiv.className = 'sub';
-  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.`;
+  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Écart = combien en dessous (ou au-dessus) de l'Attendu — ex: -6 si 6 manquants. Nouveau total se calcule automatiquement. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.`;
   wrap.appendChild(subDiv);
 
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Aujourd'hui — Soir (Total)</th><th>Ajouté</th><th>Nouveau total</th><th>Attendu</th><th>Vendu (calculé)</th>${canSeeNext?"<th>Demain — Jour (Début)</th>":""}
+    <th>Marque</th><th>Aujourd'hui — Soir (Fin)</th><th>Ajouté</th><th>Attendu</th><th title="Écart par rapport à l'Attendu — négatif si en dessous, ex: -6">Écart</th><th>Nouveau total</th><th>Vendu (calculé)</th>${canSeeNext?"<th>Demain — Jour (Début)</th>":""}
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
   const soldCells = {}, leftCells = {}, rightCells = {}, totalInputs = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="${canSeeNext?7:6}"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="${canSeeNext?8:7}"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
-    if(!store[key]) store[key] = { added:"", total:"" };
+    if(!store[key]) store[key] = { added:"", ecart:"", total:"" };
+    if(store[key].ecart === undefined) store[key].ecart = ""; // upgrade older saved rows
 
     const tdName = document.createElement('td'); tdName.textContent = item.name;
 
     const tdLeft = document.createElement('td');
     tdLeft.className = 'preview-cell';
-    const nightTotal = bucket.bartNight?.stock?.[key]?.total;
-    tdLeft.textContent = (nightTotal !== undefined && nightTotal !== "") ? nightTotal : '—';
+    const nightFin = bucket.bartNight?.stock?.[key]?.fin;
+    tdLeft.textContent = (nightFin !== undefined && nightFin !== "") ? nightFin : '—';
     leftCells[key] = tdLeft;
 
     const tdAdded = document.createElement('td');
@@ -2707,24 +2686,41 @@ function buildInventairePanel(){
     inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); checkCloseOut(key); });
     tdAdded.appendChild(inAdded);
 
-    const tdTotal = document.createElement('td');
-    const inTotal = document.createElement('input');
-    inTotal.type='number'; inTotal.className='num'; inTotal.value = store[key].total;
-    inTotal.addEventListener('input', ()=>{ store[key].total = inTotal.value; recalcSold(key); checkCloseOut(key); });
-    tdTotal.appendChild(inTotal);
-    totalInputs[key] = inTotal;
-
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
     tdExp.textContent = item.expected;
+
+    // Écart = how far off from Attendu (can be negative, e.g. "-6" if 6 short). Nouveau Total
+    // is then calculated automatically as Attendu + Écart, not typed directly.
+    const tdEcart = document.createElement('td');
+    const inEcart = document.createElement('input');
+    inEcart.type='number'; inEcart.className='num'; inEcart.value = store[key].ecart;
+
+    const tdTotal = document.createElement('td');
+    const totalDisplay = document.createElement('input');
+    totalDisplay.type='number'; totalDisplay.className='num calc'; totalDisplay.readOnly = true;
+    totalInputs[key] = totalDisplay;
+
+    function recalcTotalFromEcart(){
+      const attendu = Number(item.expected) || 0;
+      store[key].total = round2(attendu + (Number(store[key].ecart)||0));
+      totalDisplay.value = store[key].total;
+    }
+    inEcart.addEventListener('input', ()=>{
+      store[key].ecart = inEcart.value;
+      recalcTotalFromEcart();
+      recalcSold(key); checkCloseOut(key);
+    });
+    recalcTotalFromEcart(); // keep total in sync even before any edit this session
+    tdEcart.appendChild(inEcart); tdTotal.appendChild(totalDisplay);
 
     const tdSold = document.createElement('td');
     tdSold.className = 'calc-hint-cell';
     tdSold.textContent = '...';
     soldCells[key] = tdSold;
 
-    tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdAdded); tr.appendChild(tdTotal);
-    tr.appendChild(tdExp); tr.appendChild(tdSold);
+    tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdAdded); tr.appendChild(tdExp);
+    tr.appendChild(tdEcart); tr.appendChild(tdTotal); tr.appendChild(tdSold);
 
     if(canSeeNext){
       const tdRight = document.createElement('td');
@@ -2738,11 +2734,12 @@ function buildInventairePanel(){
   table.appendChild(tbody);
   wrap.appendChild(table);
 
-  // Third check: does tonight's Total + what the janitor added actually equal today's confirmed Nouveau Total?
-  // Empty/missing = treated as 0 here, per your instruction — only a real value mismatch is flagged.
+  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
+  // actually equal today's confirmed Nouveau Total? Empty/missing = treated as 0 here, per
+  // your instruction — only a real value mismatch is flagged.
   function checkCloseOut(key){
-    const nightTotal = Number(bucket.bartNight?.stock?.[key]?.total) || 0;
-    const expected = round2(nightTotal + (Number(store[key].added)||0));
+    const nightFin = Number(bucket.bartNight?.stock?.[key]?.fin) || 0;
+    const expected = round2(nightFin + (Number(store[key].added)||0));
     const actual = round2(Number(store[key].total) || 0);
     const mismatch = actual !== expected;
     leftCells[key].classList.toggle('mismatch-cell', mismatch);
