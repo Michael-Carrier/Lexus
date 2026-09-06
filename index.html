@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.852</title>
+<title>Registre du bar v2.853</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.0</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.1</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -652,6 +652,10 @@
 
 <script>
 // ---------- Data model ----------
+// Fût (draft/keg) — a simple tally, not a full reconciled inventory like the bottled beers.
+const futTaps = ['Budweiser', 'Stella', 'Michelob', 'Chippe'];
+const futPours = ['Shot', 'Bock', 'Verre', 'Pichet'];
+
 const inventaireItems = [
   {name:"Budweiser", expected:96}, {name:"Bud Light", expected:48},
   {name:"Bleu", expected:32}, {name:"Labatt 50", expected:24},
@@ -2331,18 +2335,21 @@ function buildShiftPanel(shiftType){
     const argentDisplay = document.createElement('input');
     argentDisplay.type='number'; argentDisplay.className='num calc'; argentDisplay.readOnly = true;
 
-    // Row: TPS | TVQ (no sous-total — reverse-calculated from Jour/Nuit only, never Interac)
+    // Row: TPS | TVQ (no sous-total — reverse-calculated from Jour/Nuit only, never Interac).
+    // Editable on purpose: if the numbers don't quite add up in practice, the boss can correct
+    // these directly rather than being stuck with a formula that doesn't match reality.
     const taxRow = document.createElement('div');
     taxRow.className = 'shift-row'; taxRow.style.marginTop = '4px';
     const tpsField = document.createElement('div'); tpsField.className='field';
     tpsField.innerHTML = `<label>TPS (5%)</label>`;
     const tpsDisplay = document.createElement('input');
-    tpsDisplay.type='number'; tpsDisplay.className='num calc'; tpsDisplay.readOnly = true;
+    tpsDisplay.type='number'; tpsDisplay.className='num';
     const tvqField = document.createElement('div'); tvqField.className='field';
     tvqField.innerHTML = `<label>TVQ (9.975%)</label>`;
     const tvqDisplay = document.createElement('input');
-    tvqDisplay.type='number'; tvqDisplay.className='num calc'; tvqDisplay.readOnly = true;
+    tvqDisplay.type='number'; tvqDisplay.className='num';
 
+    if(!store.cash) store.cash = {};
     function recalcFinancials(){
       const jourNuitVal = Number(shiftType==='bartDay' ? store.jour : store.nuit) || 0;
       const interacVal = Number(store.interac.total) || 0;
@@ -2350,9 +2357,13 @@ function buildShiftPanel(shiftType){
       argentDisplay.value = argent;
 
       const b = taxBreakdown(jourNuitVal);
-      store.cash = { total: jourNuitVal, subtotal: b.subtotal, tps: b.tps, tvq: b.tvq };
-      tpsDisplay.value = b.tps;
-      tvqDisplay.value = b.tvq;
+      // Only auto-fill TPS/TVQ from the formula until the boss corrects one by hand —
+      // after that, the correction sticks even if Jour/Nuit changes again.
+      if(!store.cash.tpsManual) store.cash.tps = b.tps;
+      if(!store.cash.tvqManual) store.cash.tvq = b.tvq;
+      store.cash.total = jourNuitVal; store.cash.subtotal = b.subtotal;
+      tpsDisplay.value = store.cash.tps;
+      tvqDisplay.value = store.cash.tvq;
       // Interac no longer carries its own tax breakdown — only its total matters now.
       store.interac.subtotal = ""; store.interac.tps = ""; store.interac.tvq = "";
     }
@@ -2361,6 +2372,8 @@ function buildShiftPanel(shiftType){
       recalcFinancials();
     });
     interacInput.addEventListener('input', ()=>{ store.interac.total = interacInput.value; recalcFinancials(); });
+    tpsDisplay.addEventListener('input', ()=>{ store.cash.tps = tpsDisplay.value; store.cash.tpsManual = true; });
+    tvqDisplay.addEventListener('input', ()=>{ store.cash.tvq = tvqDisplay.value; store.cash.tvqManual = true; });
     recalcFinancials();
 
     jnField.appendChild(jnInput); interacField.appendChild(interacInput); argentField.appendChild(argentDisplay);
@@ -2617,7 +2630,7 @@ function buildStockSection(shiftType, bucket){
         rowStore.debut = auto;
         rowStore.debutManual = false;
         if(debutInputs[key]) debutInputs[key].value = auto;
-        rowStore.total = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
+        rowStore.total = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
         if(totalInputEls[key]){ totalInputEls[key].value = rowStore.total; totalInputEls[key].classList.remove('mismatch-cell'); }
         refreshRow(key);
       });
@@ -2633,6 +2646,73 @@ function buildStockSection(shiftType, bucket){
   } else {
     Object.keys(leftCellEls).forEach(refreshRow);
   }
+
+  // Fût (draft) — just a tally, no reconciliation, no Attendu. Début/Ajout/Fin/Total
+  // per tap × format, same math as the bottled beers above but nothing chains anywhere.
+  if(!store.fut) store.fut = {};
+  const futHeading = document.createElement('h2');
+  futHeading.textContent = 'Fût';
+  futHeading.style.cssText = 'font-size:1.1rem; margin:24px 0 0;';
+  section.appendChild(futHeading);
+  const futSub = document.createElement('div');
+  futSub.className = 'sub';
+  futSub.textContent = 'Simple registre — pas de rapprochement avec les autres quarts, juste un suivi.';
+  section.appendChild(futSub);
+
+  const futTable = document.createElement('table');
+  futTable.className = 'form-table';
+  futTable.innerHTML = `<thead><tr><th>Fût / Format</th><th>Début</th><th>Ajout</th><th>Fin</th><th>Vendu (calculé)</th></tr></thead>`;
+  const futBody = document.createElement('tbody');
+
+  futTaps.forEach((tap, tapIdx)=>{
+    const tapRow = document.createElement('tr');
+    tapRow.innerHTML = `<td colspan="5" style="font-weight:600; background:#EDEAE2;">${tap}</td>`;
+    futBody.appendChild(tapRow);
+
+    futPours.forEach((pour, pourIdx)=>{
+      const key = `tap${tapIdx}_pour${pourIdx}`;
+      if(!store.fut[key]) store.fut[key] = { debut:"", ajout:"", fin:"", total:"" };
+      const rowStore = store.fut[key];
+
+      const tr = document.createElement('tr');
+      const tdName = document.createElement('td'); tdName.textContent = `  ${pour}`; tdName.style.paddingLeft='18px';
+
+      const tdDebut = document.createElement('td');
+      const inDebut = document.createElement('input');
+      inDebut.type='number'; inDebut.step='1'; inDebut.className='num'; inDebut.value = rowStore.debut;
+      enforceWholeNumber(inDebut);
+
+      const tdAjout = document.createElement('td');
+      const inAjout = document.createElement('input');
+      inAjout.type='number'; inAjout.step='1'; inAjout.className='num'; inAjout.value = rowStore.ajout;
+      enforceWholeNumber(inAjout);
+
+      const tdFin = document.createElement('td');
+      const inFin = document.createElement('input');
+      inFin.type='number'; inFin.step='1'; inFin.className='num'; inFin.value = rowStore.fin;
+      enforceWholeNumber(inFin);
+
+      const tdTotal = document.createElement('td');
+      const inTotal = document.createElement('input');
+      inTotal.type='number'; inTotal.step='1'; inTotal.className='num calc'; inTotal.value = rowStore.total;
+      enforceWholeNumber(inTotal);
+
+      function recalcFutTotal(){
+        rowStore.total = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajout) - numOrZero(rowStore.fin));
+        inTotal.value = rowStore.total;
+      }
+      inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; recalcFutTotal(); });
+      inAjout.addEventListener('input', ()=>{ rowStore.ajout = inAjout.value; recalcFutTotal(); });
+      inFin.addEventListener('input', ()=>{ rowStore.fin = inFin.value; recalcFutTotal(); });
+      inTotal.addEventListener('input', ()=>{ rowStore.total = inTotal.value; });
+
+      tdDebut.appendChild(inDebut); tdAjout.appendChild(inAjout); tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
+      tr.appendChild(tdName); tr.appendChild(tdDebut); tr.appendChild(tdAjout); tr.appendChild(tdFin); tr.appendChild(tdTotal);
+      futBody.appendChild(tr);
+    });
+  });
+  futTable.appendChild(futBody);
+  section.appendChild(futTable);
 
   return section;
 }
@@ -2963,14 +3043,21 @@ function shiftRowToStore(row){
     bartender2: row.bartender2 || "", start2: row.start_time2 || "", end2: row.end_time2 || "",
     needsReview: row.needs_review || false,
     stock: row.stock || {},
+    fut: row.fut || {},
     interac: {
       total: row.interac_total ?? "", subtotal: row.interac_subtotal ?? "",
       tps: row.interac_tps ?? "", tvq: row.interac_tvq ?? ""
     }
   };
-  const total = round2((Number(store.jour)||0) + (Number(store.nuit)||0));
-  const b = taxBreakdown(total);
-  store.cash = { total, subtotal:b.subtotal, tps:b.tps, tvq:b.tvq };
+  // Prefer the saved cash object (preserves any manual TPS/TVQ correction); only
+  // compute a fresh one for older rows that never had one saved.
+  if(row.cash && (row.cash.tps !== undefined || row.cash.tvq !== undefined)){
+    store.cash = row.cash;
+  } else {
+    const total = round2((Number(store.jour)||0) + (Number(store.nuit)||0));
+    const b = taxBreakdown(total);
+    store.cash = { total, subtotal:b.subtotal, tps:b.tps, tvq:b.tvq };
+  }
   return store;
 }
 function storeToShiftRow(weekKey, day, shiftType, store){
@@ -2987,7 +3074,9 @@ function storeToShiftRow(weekKey, day, shiftType, store){
     has_second_bartender: !!store.hasSecondBartender,
     bartender2: store.bartender2 || null, start_time2: store.start2 || null, end_time2: store.end2 || null,
     needs_review: !!store.needsReview,
-    stock: store.stock || {}
+    stock: store.stock || {},
+    fut: store.fut || {},
+    cash: store.cash || {}
   };
 }
 function pokerRowToStore(row){
