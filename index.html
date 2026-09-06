@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.9</title>
+<title>Registre du bar v 2.851</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.8</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.9</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1178,10 +1178,15 @@ function buildAccountantSheet(){
   row(11,'Interac', totInterac, 'Receipts paid in Interac (from Overall Summary)', 'pg-calc');
   row(12,'Guich Poker', round2(pk.guichet), 'Amount put in the atm (from Overall Summary)', 'pg-calc');
   row(13,'Guich Caisses', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : '?', 'from Overall Summary', guichCaissesKnown?'pg-calc':'pg-unknown');
-  row(14,'Depot', '?', 'Deposit at bank', 'pg-unknown');
+  const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
+  row(14,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : '?', 'Deposit at bank (Misc., Section 2)', depotOverallKnown?'pg-calc':'pg-unknown');
   row(15,'Coup/Valid', round2(pk.machine), 'Coupons that were inserted in the poker machines', 'pg-calc');
 
-  cell(17,1,'Reste','pg-day'); cell(17,2,'?','pg-unknown');
+  const resteKnown = totKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
+  const resteValue = resteKnown ? round2(
+    totValue - Number(sun.factures) - totInterac - pk.guichet - Number(sun.guichCaisses) - Number(sun.depotOverall) - pk.machine
+  ) : null;
+  cell(17,1,'Reste','pg-day'); cell(17,2, resteValue===null?'?':resteValue, resteValue===null?'pg-unknown':'pg-calc', 'TOT moins Facture, Interac, Guich Poker, Guich Caisses, Depot et Coup/Valid.');
 
   wrap.appendChild(grid);
 
@@ -2999,7 +3004,9 @@ function weekSettingsRowToStore(row){
     depotOverall: row.depot_overall ?? "",
     departManualOverride: row.depart_manual_override || false,
     departManualValue: row.depart_manual_value ?? "",
-    confirmedEndOfWeekStock: row.confirmed_end_of_week_stock || null
+    confirmedEndOfWeekStock: (typeof row.confirmed_end_of_week_stock === 'string')
+      ? (()=>{ try{ return JSON.parse(row.confirmed_end_of_week_stock); }catch(e){ return null; } })()
+      : (row.confirmed_end_of_week_stock || null)
   };
 }
 
