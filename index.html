@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.851</title>
+<title>Registre du bar v2.852</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v2.9</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.0</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -744,6 +744,14 @@ const shiftConfig = {
 };
 
 function round2(n){ return Math.round(n*100)/100; }
+function roundInt(n){ return Math.round(Number(n)||0); } // beer counts are whole numbers — no fractions of a bottle
+function enforceWholeNumber(input){
+  input.addEventListener('change', ()=>{
+    if(input.value === "") return;
+    const whole = roundInt(input.value);
+    if(String(whole) !== input.value){ input.value = whole; input.dispatchEvent(new Event('input')); }
+  });
+}
 function hoursBetween(start, end){
   if(!start || !end) return 0;
   const [sh,sm] = start.split(':').map(Number);
@@ -2364,7 +2372,7 @@ function buildShiftPanel(shiftType){
     wrap.appendChild(taxRow);
   }
 
-  if(store.needsReview){
+  if(store.needsReview && state.role === 'boss'){
     const pendingNote = document.createElement('div');
     pendingNote.style.cssText = 'font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.82rem; color:var(--copper-deep); font-weight:600; margin-bottom:10px;';
     pendingNote.textContent = '🔔 En attente de révision par le propriétaire';
@@ -2547,29 +2555,33 @@ function buildStockSection(shiftType, bucket){
 
     const tdDebut = document.createElement('td');
     const inDebut = document.createElement('input');
-    inDebut.type='number'; inDebut.className='num'; inDebut.value = rowStore.debut;
+    inDebut.type='number'; inDebut.step='1'; inDebut.className='num'; inDebut.value = rowStore.debut;
     debutInputs[key] = inDebut;
+    enforceWholeNumber(inDebut);
 
     const tdBeers = document.createElement('td');
     const inBeers = document.createElement('input');
-    inBeers.type='number'; inBeers.className='num'; inBeers.value = rowStore.ajoutBeers;
+    inBeers.type='number'; inBeers.step='1'; inBeers.className='num'; inBeers.value = rowStore.ajoutBeers;
+    enforceWholeNumber(inBeers);
 
     const tdFin = document.createElement('td');
     const inFin = document.createElement('input');
-    inFin.type='number'; inFin.className='num'; inFin.value = rowStore.fin;
+    inFin.type='number'; inFin.step='1'; inFin.className='num'; inFin.value = rowStore.fin;
+    enforceWholeNumber(inFin);
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
-    inTotal.type='number'; inTotal.className='num calc'; inTotal.value = rowStore.total;
+    inTotal.type='number'; inTotal.step='1'; inTotal.className='num calc'; inTotal.value = rowStore.total;
     totalInputEls[key] = inTotal;
+    enforceWholeNumber(inTotal);
 
     function recalcTotal(){
-      rowStore.total = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
+      rowStore.total = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       inTotal.value = rowStore.total;
       inTotal.classList.remove('mismatch-cell'); // recalculated automatically, so it matches again by construction
     }
     function checkTotalOverride(){
-      const expected = round2(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
+      const expected = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       const mismatch = numOrZero(rowStore.total) !== expected;
       inTotal.classList.toggle('mismatch-cell', mismatch);
     }
@@ -2680,8 +2692,9 @@ function buildInventairePanel(){
 
     const tdAdded = document.createElement('td');
     const inAdded = document.createElement('input');
-    inAdded.type='number'; inAdded.className='num'; inAdded.value = store[key].added;
+    inAdded.type='number'; inAdded.step='1'; inAdded.className='num'; inAdded.value = store[key].added;
     inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); checkCloseOut(key); });
+    enforceWholeNumber(inAdded);
     tdAdded.appendChild(inAdded);
 
     const tdExp = document.createElement('td');
@@ -2692,7 +2705,8 @@ function buildInventairePanel(){
     // is then calculated automatically as Attendu + Écart, not typed directly.
     const tdEcart = document.createElement('td');
     const inEcart = document.createElement('input');
-    inEcart.type='number'; inEcart.className='num'; inEcart.value = store[key].ecart;
+    inEcart.type='number'; inEcart.step='1'; inEcart.className='num'; inEcart.value = store[key].ecart;
+    enforceWholeNumber(inEcart);
 
     const tdTotal = document.createElement('td');
     const totalDisplay = document.createElement('input');
@@ -2701,7 +2715,7 @@ function buildInventairePanel(){
 
     function recalcTotalFromEcart(){
       const attendu = Number(item.expected) || 0;
-      store[key].total = round2(attendu + (Number(store[key].ecart)||0));
+      store[key].total = roundInt(attendu + (Number(store[key].ecart)||0));
       totalDisplay.value = store[key].total;
     }
     inEcart.addEventListener('input', ()=>{
@@ -2827,7 +2841,11 @@ function buildInventairePanel(){
         snapshot[key] = store[key].total;
       });
       sun.confirmedEndOfWeekStock = snapshot;
-      await saveData(document.createElement('div')); // silent-ish save; status bar above already shows feedback
+      // Save the day's own numbers AND the confirmation as two separate writes — the
+      // confirmation never rides in the general save payload, so it can't get wiped
+      // out later by an ordinary Enregistrer click using a stale in-memory copy.
+      await saveData(document.createElement('div'));
+      await saveConfirmedEndOfWeekStock(state.week, snapshot);
       renderPanel();
     });
     confirmBox.appendChild(label);
@@ -2991,9 +3009,16 @@ function storeToWeekSettingsRow(weekKey, sun){
     depot: sun.depot===""?null:Number(sun.depot),
     depot_overall: sun.depotOverall===""?null:Number(sun.depotOverall),
     depart_manual_override: !!sun.departManualOverride,
-    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue),
-    confirmed_end_of_week_stock: sun.confirmedEndOfWeekStock || null
+    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue)
+    // confirmed_end_of_week_stock deliberately excluded — it's written ONLY by
+    // saveConfirmedEndOfWeekStock(), never by a regular save, so an ordinary
+    // Enregistrer click can never accidentally wipe out a confirmation.
   };
+}
+async function saveConfirmedEndOfWeekStock(weekKey, snapshot){
+  const { error } = await sb.from('week_settings')
+    .upsert({ week_key: weekKey, confirmed_end_of_week_stock: snapshot }, {onConflict:'week_key'});
+  if(error) throw error;
 }
 function weekSettingsRowToStore(row){
   return {
