@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2,856</title>
+<title>Registre du bar v2.857</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.5</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1131,6 +1131,18 @@ function computeWeekPokerTotals(weekK){
   const overPoker = round2(total - inserted); // D17
   return {coupons, inserted, argent, machine, guichet, total, overPoker};
 }
+// Weekly Net, honoring any day where the boss manually corrected Net on the Poker tab —
+// otherwise falls back to Inséré − Coupons for that day, same as the raw total would give.
+function computeWeekPokerNet(weekK){
+  let net = 0;
+  dayNames.forEach(d=>{
+    const b = bucketFor(weekK, d);
+    const coupons = Number(b.misc?.coupons)||0;
+    const inserted = Number(b.misc?.total)||0;
+    net += b.misc?.netManual ? (Number(b.misc.net)||0) : round2(inserted - coupons);
+  });
+  return round2(net);
+}
 
 function buildAccountantSheet(){
   const wrap = document.createElement('div');
@@ -1148,7 +1160,7 @@ function buildAccountantSheet(){
   const totCash = round2(tt.totJour + tt.totSoir); // "Caisses" — same as #2's Caisses
   const totInterac = round2(tt.totInterac + tt.meInterac);
   const totTaxes = round2(tt.totTPS + tt.meTPS + tt.totTVQ + tt.meTVQ);
-  const pokerNet = round2(pk.inserted - pk.coupons);
+  const pokerNet = computeWeekPokerNet(state.week);
 
   const poolKnown = sun.poolTbxl !== "" && sun.poolTbxl !== undefined;
   const pinutsKnown = sun.pinutsTbxl !== "" && sun.pinutsTbxl !== undefined;
@@ -1463,7 +1475,7 @@ function buildOverallSheet(){
   const block1Taxes = round2(tt.totTPS + tt.meTPS + tt.totTVQ + tt.meTVQ);
   const block1Interac = round2(tt.totInterac + tt.meInterac);
   const pk = computeWeekPokerTotals(state.week);
-  const block2Poker = round2(pk.inserted - pk.coupons);
+  const block2Poker = computeWeekPokerNet(state.week);
   const poolKnown = sun.poolTbxl !== "" && sun.poolTbxl !== undefined;
   const pinutsKnown = sun.pinutsTbxl !== "" && sun.pinutsTbxl !== undefined;
   const paieJaboinKnown = sun.paieJaboin !== "" && sun.paieJaboin !== undefined;
@@ -1885,12 +1897,14 @@ function buildPokerSheet(){
   g1Box.appendChild(g1Row);
   wrap.appendChild(g1Box);
 
-  // Pull the known values first.
+  // Pull the known values first. Net prefers the manually-corrected value if the boss
+  // overrode it on the Poker tab — otherwise falls back to Inséré − Coupons/Win.
   const dayData = dayNames.map(d=>{
     const b = bucketFor(state.week, d);
     const win = Number(b.misc?.coupons)||0;
     const inserted = Number(b.misc?.total)||0;
-    return { day:d, win, inserted, net: round2(inserted - win) };
+    const net = b.misc?.netManual ? (Number(b.misc.net)||0) : round2(inserted - win);
+    return { day:d, win, inserted, net };
   });
   const wk = computeWeekPokerFull(state.week);
   const B12 = wk.B12, F12 = wk.F12, B14 = wk.B14, B15 = wk.B15, B16 = wk.B16;
