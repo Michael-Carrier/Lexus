@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.853</title>
+<title>Registre du bar v2,856</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.1</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.4</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -2115,10 +2115,10 @@ function buildMiscPanel(){
     <div class="sub">${weekSelect.options[weekSelect.selectedIndex].textContent}. Coupons/Win et Total inséré — toute la semaine visible, seul ${state.day} est modifiable ici.</div>
   `;
 
-  // Weekly grid: Coupons/Win + Total inséré, all 7 days visible, only the selected day editable.
+  // Weekly grid: Coupons/Win + Total inséré + Net, all 7 days visible, only the selected day editable.
   const table = document.createElement('table');
   table.className = 'form-table';
-  table.innerHTML = `<thead><tr><th>Jour</th><th>Coupons/Win</th><th>Total inséré</th></tr></thead>`;
+  table.innerHTML = `<thead><tr><th>Jour</th><th>Coupons/Win</th><th>Total inséré</th><th>Net</th></tr></thead>`;
   const tbody = document.createElement('tbody');
   dayNames.forEach(d=>{
     const dayBucket = bucketFor(state.week, d);
@@ -2126,6 +2126,8 @@ function buildMiscPanel(){
     const dStore = dayBucket.misc;
     if(dStore.coupons === undefined) dStore.coupons = "";
     if(dStore.total === undefined) dStore.total = "";
+    if(dStore.net === undefined) dStore.net = "";
+    if(dStore.netManual === undefined) dStore.netManual = false;
 
     const isActive = d === state.day;
     const tr = document.createElement('tr');
@@ -2138,17 +2140,29 @@ function buildMiscPanel(){
     const inCoupons = document.createElement('input');
     inCoupons.type='number'; inCoupons.className='num'; inCoupons.value = dStore.coupons;
     inCoupons.disabled = !isActive;
-    inCoupons.addEventListener('input', ()=>{ dStore.coupons = inCoupons.value; });
-    tdCoupons.appendChild(inCoupons);
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = dStore.total;
     inTotal.disabled = !isActive;
-    inTotal.addEventListener('input', ()=>{ dStore.total = inTotal.value; });
-    tdTotal.appendChild(inTotal);
 
-    tr.appendChild(tdDay); tr.appendChild(tdCoupons); tr.appendChild(tdTotal);
+    const tdNet = document.createElement('td');
+    const inNet = document.createElement('input');
+    inNet.type='number'; inNet.className='num'; inNet.value = dStore.net;
+    inNet.disabled = !isActive;
+
+    function recalcNet(){
+      if(dStore.netManual) return; // a manual correction sticks until cleared
+      dStore.net = round2((Number(dStore.total)||0) - (Number(dStore.coupons)||0));
+      inNet.value = dStore.net;
+    }
+    inCoupons.addEventListener('input', ()=>{ dStore.coupons = inCoupons.value; recalcNet(); });
+    inTotal.addEventListener('input', ()=>{ dStore.total = inTotal.value; recalcNet(); });
+    inNet.addEventListener('input', ()=>{ dStore.net = inNet.value; dStore.netManual = true; });
+    recalcNet(); // keep in sync even before any edit this session
+
+    tdCoupons.appendChild(inCoupons); tdTotal.appendChild(inTotal); tdNet.appendChild(inNet);
+    tr.appendChild(tdDay); tr.appendChild(tdCoupons); tr.appendChild(tdTotal); tr.appendChild(tdNet);
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
@@ -2311,7 +2325,7 @@ function buildShiftPanel(shiftType){
     overField.innerHTML = `<label>Over (argent au début du quart)</label>`;
     const overInput = document.createElement('input');
     overInput.type='number'; overInput.className='num'; overInput.value = store.over;
-    overInput.addEventListener('input', ()=>{ store.over = overInput.value; });
+    overInput.addEventListener('input', ()=>{ store.over = overInput.value; argentDisplay.value = computeArgent(); });
     overField.appendChild(overInput);
     wrap.appendChild(overField);
 
@@ -2353,8 +2367,6 @@ function buildShiftPanel(shiftType){
     function recalcFinancials(){
       const jourNuitVal = Number(shiftType==='bartDay' ? store.jour : store.nuit) || 0;
       const interacVal = Number(store.interac.total) || 0;
-      const argent = round2(jourNuitVal - interacVal);
-      argentDisplay.value = argent;
 
       const b = taxBreakdown(jourNuitVal);
       // Only auto-fill TPS/TVQ from the formula until the boss corrects one by hand —
@@ -2366,14 +2378,27 @@ function buildShiftPanel(shiftType){
       tvqDisplay.value = store.cash.tvq;
       // Interac no longer carries its own tax breakdown — only its total matters now.
       store.interac.subtotal = ""; store.interac.tps = ""; store.interac.tvq = "";
+
+      // Argent = Jour (ou Nuit) + Over + TPS + TVQ − Interac (matches #3 Transaction Summary).
+      argentDisplay.value = computeArgent();
+    }
+    function computeArgent(){
+      const jourNuitVal = Number(shiftType==='bartDay' ? store.jour : store.nuit) || 0;
+      return round2(jourNuitVal + (Number(store.over)||0) + (Number(store.cash.tps)||0) + (Number(store.cash.tvq)||0) - (Number(store.interac.total)||0));
     }
     jnInput.addEventListener('input', ()=>{
       if(shiftType==='bartDay') store.jour = jnInput.value; else store.nuit = jnInput.value;
       recalcFinancials();
     });
     interacInput.addEventListener('input', ()=>{ store.interac.total = interacInput.value; recalcFinancials(); });
-    tpsDisplay.addEventListener('input', ()=>{ store.cash.tps = tpsDisplay.value; store.cash.tpsManual = true; });
-    tvqDisplay.addEventListener('input', ()=>{ store.cash.tvq = tvqDisplay.value; store.cash.tvqManual = true; });
+    tpsDisplay.addEventListener('input', ()=>{
+      store.cash.tps = tpsDisplay.value; store.cash.tpsManual = true;
+      argentDisplay.value = computeArgent();
+    });
+    tvqDisplay.addEventListener('input', ()=>{
+      store.cash.tvq = tvqDisplay.value; store.cash.tvqManual = true;
+      argentDisplay.value = computeArgent();
+    });
     recalcFinancials();
 
     jnField.appendChild(jnInput); interacField.appendChild(interacInput); argentField.appendChild(argentDisplay);
@@ -3082,7 +3107,8 @@ function storeToShiftRow(weekKey, day, shiftType, store){
 function pokerRowToStore(row){
   return {
     coupons: row.coupons ?? "", argent: row.argent ?? "",
-    total: row.total ?? "", machine: row.machine ?? "", guichet: row.guichet ?? ""
+    total: row.total ?? "", machine: row.machine ?? "", guichet: row.guichet ?? "",
+    net: row.net ?? "", netManual: row.net_manual || false
   };
 }
 function storeToWeekSettingsRow(weekKey, sun){
@@ -3160,10 +3186,11 @@ async function syncWeekToSupabase(weekKey){
     ['bartDay','bartNight'].forEach(st=>{
       if(bucket[st]) shiftRows.push(storeToShiftRow(weekKey, d, st, bucket[st]));
     });
-    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet})=>({
+    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net,netManual})=>({
       coupons: coupons===""?null:Number(coupons), argent: argent===""?null:Number(argent),
       total: total===""?null:Number(total), machine: machine===""?null:Number(machine),
-      guichet: guichet===""?null:Number(guichet)
+      guichet: guichet===""?null:Number(guichet),
+      net: net===""?null:Number(net), net_manual: !!netManual
     }))(bucket.misc) });
     if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
     if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
