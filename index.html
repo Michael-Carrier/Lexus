@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.857</title>
+<title>Registre du bar v2.859</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -587,7 +587,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.5</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.6</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -765,8 +765,10 @@ function hoursBetween(start, end){
   return (endMin-startMin)/60;
 }
 function taxBreakdown(total){
-  const t = Number(total)||0;
-  const subtotal = t/1.14975;
+  // Jour/Nuit is the pre-tax base — TPS and TVQ are added on top of it, not extracted
+  // from within it. Confirmed against the owner's real numbers: his TPS/TVQ = base × rate,
+  // not base / 1.14975 × rate (which was systematically a bit low on every single row).
+  const subtotal = Number(total)||0;
   const tps = subtotal*0.05;
   const tvq = subtotal*0.09975;
   return { subtotal:round2(subtotal), tps:round2(tps), tvq:round2(tvq) };
