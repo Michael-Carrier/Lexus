@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.861</title>
+<title>Registre du bar v2.863</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -190,6 +190,17 @@
     font-style:italic;
     font-variant-numeric:tabular-nums;
     cursor:help;
+  }
+  .num-narrow{
+    width:3.2em !important;
+    text-align:center;
+  }
+  .warn-cell{
+    color:#8A2E1E;
+    font-weight:600;
+    font-size:0.85rem;
+    cursor:help;
+    white-space:nowrap;
   }
   .preview-cell{
     color:var(--ink-soft);
@@ -587,7 +598,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.8</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.9</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -754,6 +765,16 @@ function enforceWholeNumber(input){
     if(input.value === "") return;
     const whole = roundInt(input.value);
     if(String(whole) !== input.value){ input.value = whole; input.dispatchEvent(new Event('input')); }
+  });
+}
+function clampThreeDigits(input, allowNegative){
+  input.addEventListener('change', ()=>{
+    if(input.value === "") return;
+    let v = roundInt(input.value);
+    const max = allowNegative ? 999 : 999;
+    const min = allowNegative ? -999 : 0;
+    v = Math.max(min, Math.min(max, v));
+    if(String(v) !== input.value){ input.value = v; input.dispatchEvent(new Event('input')); }
   });
 }
 function hoursBetween(start, end){
@@ -2842,20 +2863,20 @@ function buildInventairePanel(){
 
   const subDiv = document.createElement('div');
   subDiv.className = 'sub';
-  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Écart = combien en dessous (ou au-dessus) de l'Attendu — ex: -6 si 6 manquants. Nouveau total se calcule automatiquement. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas.`;
+  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Remplis Écart OU Nouveau total, l'autre se calcule tout seul. Colonnes grises = aperçu du quart voisin. Rouge = ça ne concorde pas avec les formulaires des bartenders.`;
   wrap.appendChild(subDiv);
 
   const table = document.createElement('table');
   table.className = 'form-table';
   table.innerHTML = `<thead><tr>
-    <th>Marque</th><th>Aujourd'hui — Soir (Fin)</th><th>Ajouté</th><th>Attendu</th><th title="Écart par rapport à l'Attendu — négatif si en dessous, ex: -6">Écart</th><th>Nouveau total</th><th>Vendu (calculé)</th>${canSeeNext?"<th>Demain — Jour (Début)</th>":""}
+    <th>Marque</th><th>Aujourd'hui — Soir (Fin)</th><th>Ajouté</th><th>Attendu</th><th title="Remplis l'un ou l'autre — l'autre se calcule tout seul">Écart</th><th>Nouveau total</th><th></th><th>Vendu (calculé)</th>${canSeeNext?"<th>Demain — Jour (Début)</th>":""}
   </tr></thead>`;
   const tbody = document.createElement('tbody');
 
-  const soldCells = {}, leftCells = {}, rightCells = {}, totalInputs = {};
+  const soldCells = {}, leftCells = {}, rightCells = {}, totalInputs = {}, ecartInputs = {}, warnCells = {};
   inventaireItems.forEach((item, idx)=>{
     const tr = document.createElement('tr');
-    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="${canSeeNext?8:7}"></td>`; tbody.appendChild(tr); return; }
+    if(item.spacer){ tr.className='spacer'; tr.innerHTML = `<td colspan="${canSeeNext?9:8}"></td>`; tbody.appendChild(tr); return; }
     const key = `row${idx}`;
     if(!store[key]) store[key] = { added:"", ecart:"", total:"" };
     if(store[key].ecart === undefined) store[key].ecart = ""; // upgrade older saved rows
@@ -2870,39 +2891,50 @@ function buildInventairePanel(){
 
     const tdAdded = document.createElement('td');
     const inAdded = document.createElement('input');
-    inAdded.type='number'; inAdded.step='1'; inAdded.className='num'; inAdded.value = store[key].added;
+    inAdded.type='number'; inAdded.step='1'; inAdded.className='num num-narrow'; inAdded.value = store[key].added;
     inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); checkCloseOut(key); });
-    enforceWholeNumber(inAdded);
+    enforceWholeNumber(inAdded); clampThreeDigits(inAdded, false);
     tdAdded.appendChild(inAdded);
 
     const tdExp = document.createElement('td');
     tdExp.className = 'expected-cell';
     tdExp.textContent = item.expected;
 
-    // Écart = how far off from Attendu (can be negative, e.g. "-6" if 6 short). Nouveau Total
-    // is then calculated automatically as Attendu + Écart, not typed directly.
+    // Écart and Nouveau total are two ways of entering the same thing — fill in whichever
+    // one matches how you actually counted (most people just count the real total), and
+    // the other side calculates itself. Both stay directly editable.
     const tdEcart = document.createElement('td');
     const inEcart = document.createElement('input');
-    inEcart.type='number'; inEcart.step='1'; inEcart.className='num'; inEcart.value = store[key].ecart;
-    enforceWholeNumber(inEcart);
+    inEcart.type='number'; inEcart.step='1'; inEcart.className='num num-narrow'; inEcart.value = store[key].ecart;
+    ecartInputs[key] = inEcart;
 
     const tdTotal = document.createElement('td');
     const totalDisplay = document.createElement('input');
-    totalDisplay.type='number'; totalDisplay.className='num calc'; totalDisplay.readOnly = true;
+    totalDisplay.type='number'; totalDisplay.step='1'; totalDisplay.className='num num-narrow'; totalDisplay.value = store[key].total;
     totalInputs[key] = totalDisplay;
 
-    function recalcTotalFromEcart(){
-      const attendu = Number(item.expected) || 0;
-      store[key].total = roundInt(attendu + (Number(store[key].ecart)||0));
-      totalDisplay.value = store[key].total;
-    }
+    const attendu = Number(item.expected) || 0;
     inEcart.addEventListener('input', ()=>{
       store[key].ecart = inEcart.value;
-      recalcTotalFromEcart();
+      store[key].total = inEcart.value === "" ? "" : roundInt(attendu + Number(inEcart.value));
+      totalDisplay.value = store[key].total;
       recalcSold(key); checkCloseOut(key);
     });
-    recalcTotalFromEcart(); // keep total in sync even before any edit this session
+    totalDisplay.addEventListener('input', ()=>{
+      store[key].total = totalDisplay.value;
+      store[key].ecart = totalDisplay.value === "" ? "" : roundInt(Number(totalDisplay.value) - attendu);
+      inEcart.value = store[key].ecart;
+      recalcSold(key); checkCloseOut(key);
+    });
+    enforceWholeNumber(inEcart); clampThreeDigits(inEcart, true);
+    enforceWholeNumber(totalDisplay); clampThreeDigits(totalDisplay, false);
     tdEcart.appendChild(inEcart); tdTotal.appendChild(totalDisplay);
+
+    // Warning — only appears when the bartender chain doesn't match Inventaire's own count.
+    // Inventaire is always treated as the objective source of truth.
+    const tdWarn = document.createElement('td');
+    tdWarn.className = 'warn-cell';
+    warnCells[key] = tdWarn;
 
     const tdSold = document.createElement('td');
     tdSold.className = 'calc-hint-cell';
@@ -2910,7 +2942,7 @@ function buildInventairePanel(){
     soldCells[key] = tdSold;
 
     tr.appendChild(tdName); tr.appendChild(tdLeft); tr.appendChild(tdAdded); tr.appendChild(tdExp);
-    tr.appendChild(tdEcart); tr.appendChild(tdTotal); tr.appendChild(tdSold);
+    tr.appendChild(tdEcart); tr.appendChild(tdTotal); tr.appendChild(tdWarn); tr.appendChild(tdSold);
 
     if(canSeeNext){
       const tdRight = document.createElement('td');
@@ -2927,13 +2959,33 @@ function buildInventairePanel(){
   // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
   // actually equal today's confirmed Nouveau Total? Empty/missing = treated as 0 here, per
   // your instruction — only a real value mismatch is flagged.
+  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
+  // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
+  // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
+  // to whichever bartender shift's numbers look inconsistent, not to Inventaire itself.
   function checkCloseOut(key){
+    const dayFin = bucket.bartDay?.stock?.[key]?.fin;
+    const nightDebut = bucket.bartNight?.stock?.[key]?.debut;
     const nightFin = Number(bucket.bartNight?.stock?.[key]?.fin) || 0;
-    const expected = round2(nightFin + (Number(store[key].added)||0));
+    const added = Number(store[key].added) || 0;
+    const expected = round2(nightFin + added);
     const actual = round2(Number(store[key].total) || 0);
     const mismatch = actual !== expected;
     leftCells[key].classList.toggle('mismatch-cell', mismatch);
     totalInputs[key].classList.toggle('mismatch-cell', mismatch);
+
+    if(!mismatch || store[key].total === ""){
+      warnCells[key].textContent = '';
+      warnCells[key].title = '';
+      return;
+    }
+    const diff = Math.abs(roundInt(actual - expected));
+    // If Day's Fin doesn't even match Night's own Début, the discrepancy likely started
+    // earlier in the day shift rather than with Night's own count.
+    const dayNightBroken = dayFin !== undefined && dayFin !== "" && nightDebut !== undefined && nightDebut !== "" && Number(dayFin) !== Number(nightDebut);
+    const culprit = dayNightBroken ? 'jour' : 'nuit';
+    warnCells[key].textContent = `⚠ ${diff}`;
+    warnCells[key].title = `${diff} bouteille${diff>1?'s':''} ne concorde${diff>1?'nt':''} pas — l'écart semble provenir du quart de ${culprit}.`;
   }
   Object.keys(leftCells).forEach(checkCloseOut);
 
