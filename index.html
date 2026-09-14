@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.867</title>
+<title>Registre du bar v 2.868</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -598,14 +598,14 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.1</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.2</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
   </div>
   <button id="notifBtn" class="print-btn no-print" style="position:absolute; top:28px; right:24px; display:none;"></button>
   <div id="notifDropdown" style="display:none;"></div>
-  <button id="commentsBtn" class="print-btn no-print" style="position:absolute; top:28px; right:180px; display:none;"></button>
+  <button id="commentsBtn" class="print-btn no-print" style="position:absolute; top:28px; right:180px;">💬 Commentaires</button>
   <div id="commentsDropdown" style="display:none;"></div>
 </header>
 
@@ -839,9 +839,9 @@ let state = {
 // (this is intentionally simple, per "we'll worry about protection later").
 const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
-  barmaid: ['bartDay','bartNight','comments'],
-  janitor: ['inventaire','comments'],
-  boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','comments','pdfSheets']
+  barmaid: ['bartDay','bartNight'],
+  janitor: ['inventaire'],
+  boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
 
@@ -2001,11 +2001,27 @@ function buildPokerSheet(){
 
 function buildCommentsPanel(){
   const wrap = document.createElement('div');
-  const senderName = state.role === 'barmaid' ? (state.loggedInName || 'Barmaid') : 'Janitor';
-  wrap.innerHTML = `
-    <h2>Commentaires</h2>
-    <div class="sub">Envoie une note au propriétaire — visible dans ses notifications, horodatée automatiquement.</div>
-  `;
+  const senderName = state.role === 'barmaid' ? (state.loggedInName || 'Barmaid') : state.role === 'janitor' ? 'Janitor' : 'Boss';
+
+  const headingRow = document.createElement('div');
+  headingRow.className = 'no-print';
+  headingRow.style.cssText = 'display:flex; align-items:center; gap:10px;';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'print-btn';
+  backBtn.textContent = '← Retour';
+  backBtn.addEventListener('click', ()=>{
+    state.tab = tabBeforeComments || roleTabs[state.role][0];
+    tabBeforeComments = null;
+    renderTabs(); renderPanel();
+  });
+  const h2el = document.createElement('h2'); h2el.textContent = 'Commentaires'; h2el.style.margin = '0';
+  headingRow.appendChild(backBtn); headingRow.appendChild(h2el);
+  wrap.appendChild(headingRow);
+
+  const subDiv = document.createElement('div');
+  subDiv.className = 'sub';
+  subDiv.textContent = 'Envoie une note au propriétaire — visible dans ses notifications, horodatée automatiquement.';
+  wrap.appendChild(subDiv);
 
   const composeBox = document.createElement('div');
   composeBox.style.cssText = 'margin:14px 0; font-family:"Avenir Next","Segoe UI",sans-serif;';
@@ -2040,7 +2056,7 @@ function buildCommentsPanel(){
   composeBox.appendChild(textarea);
   composeBox.appendChild(sendBtn);
   composeBox.appendChild(sendStatus);
-  wrap.appendChild(composeBox);
+  if(state.role !== 'boss') wrap.appendChild(composeBox); // Boss is just viewing history here, not sending himself notes
 
   const listTitle = document.createElement('div');
   listTitle.className = 'sub'; listTitle.style.marginTop = '20px'; listTitle.style.fontWeight = '600';
@@ -3478,27 +3494,31 @@ notifBtn.addEventListener('click', ()=>{
   notifDropdown.style.display = 'block';
 });
 
-// ---------- Comments inbox (boss only) ----------
+// ---------- Comments inbox (button visible to everyone; dropdown/unread only for Boss) ----------
 const commentsBtn = document.getElementById('commentsBtn');
 const commentsDropdown = document.getElementById('commentsDropdown');
 let unreadComments = [];
+let tabBeforeComments = null; // remembered so the Comments page can offer a way back
 
 async function refreshComments(){
-  if(state.role !== 'boss'){ commentsBtn.style.display = 'none'; return; }
+  commentsBtn.style.display = 'block'; // always visible now, for every role
+  if(state.role !== 'boss'){ commentsBtn.textContent = '💬 Commentaires'; return; }
   try{
     const { data, error } = await sb.from('comments').select('*').eq('is_read', false).order('created_at', {ascending:false});
     if(error) throw error;
     unreadComments = data || [];
-    if(unreadComments.length > 0){
-      commentsBtn.style.display = 'block';
-      commentsBtn.textContent = `✉️ ${unreadComments.length} commentaire${unreadComments.length>1?'s':''}`;
-    } else {
-      commentsBtn.style.display = 'none';
-      commentsDropdown.style.display = 'none';
-    }
+    commentsBtn.textContent = unreadComments.length > 0
+      ? `✉️ ${unreadComments.length} commentaire${unreadComments.length>1?'s':''}`
+      : '💬 Commentaires';
   }catch(e){ /* silently retry next interval */ }
 }
 commentsBtn.addEventListener('click', ()=>{
+  // Barmaid/Janitor: just navigate straight to the Comments page, no dropdown needed.
+  if(state.role !== 'boss'){
+    tabBeforeComments = state.tab;
+    state.tab = 'comments'; renderTabs(); renderPanel();
+    return;
+  }
   if(commentsDropdown.style.display === 'block'){
     commentsDropdown.style.display = 'none';
     return;
@@ -3511,6 +3531,7 @@ commentsBtn.addEventListener('click', ()=>{
   historyBtn.className = 'print-btn'; historyBtn.textContent = "Voir l'historique";
   historyBtn.addEventListener('click', ()=>{
     commentsDropdown.style.display = 'none';
+    tabBeforeComments = state.tab;
     state.tab = 'comments'; renderTabs(); renderPanel();
   });
   const clearAllBtn = document.createElement('button');
