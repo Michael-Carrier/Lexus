@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v2.863</title>
+<title>Registre du bar v 2.867</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -598,7 +598,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v3.9</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.1</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -841,7 +841,7 @@ const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
   barmaid: ['bartDay','bartNight','comments'],
   janitor: ['inventaire','comments'],
-  boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
+  boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','comments','pdfSheets']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
 
@@ -2523,24 +2523,13 @@ function buildShiftPanel(shiftType){
   saveBtn.textContent = 'Enregistrer';
   saveBtn.addEventListener('click', async ()=>{
     if(state.role === 'barmaid') store.needsReview = true; // set BEFORE saving, not after
+    const wasFlagged = store.needsReview;
+    if(state.role === 'boss' && store.needsReview) store.needsReview = false; // Enregistrer also clears review, like every other confirm-on-save flow now
     await saveData(saveStatus);
+    if(state.role === 'boss' && wasFlagged){ await refreshNotifications(); renderPanel(); }
   });
   bottomBar.appendChild(saveStatus); bottomBar.appendChild(saveBtn);
   wrap.appendChild(bottomBar);
-
-  if(state.role === 'boss' && store.needsReview){
-    const confirmBtn = document.createElement('button');
-    confirmBtn.className = 'primary';
-    confirmBtn.style.marginTop = '10px';
-    confirmBtn.textContent = 'Confirmer ces chiffres';
-    confirmBtn.addEventListener('click', async ()=>{
-      store.needsReview = false;
-      await syncWeekToSupabase(state.week);
-      await refreshNotifications();
-      renderPanel();
-    });
-    wrap.appendChild(confirmBtn);
-  }
 
   return wrap;
 }
@@ -3046,24 +3035,25 @@ function buildInventairePanel(){
     recalcSold();
   });
 
-  wrap.appendChild(buildBottomBar());
+  const bottomBar = buildBottomBar();
+  wrap.appendChild(bottomBar);
 
-  // Sunday only: confirm this week's Nouveau Total as the official end-of-week counts.
+  // Sunday only: Enregistrer also confirms this week's Nouveau Total as the official
+  // end-of-week counts — no separate button needed, matching every other page's pattern.
   // Next week's Beer Inventory "Start" column reads directly from this.
   if(state.day === 'Dimanche'){
     const sun = weekBucket(state.week);
-    const confirmBox = document.createElement('div');
-    confirmBox.style.cssText = 'margin-top:18px; padding:14px; border:1px solid var(--copper); font-family:"Avenir Next","Segoe UI",sans-serif;';
     const already = !!sun.confirmedEndOfWeekStock;
     const label = document.createElement('div');
-    label.style.cssText = 'font-size:0.85rem; margin-bottom:8px;';
+    label.className = 'sub';
+    label.style.marginTop = '10px';
     label.textContent = already
-      ? '✓ Totaux de fin de semaine déjà confirmés — reconfirme si tu as corrigé un chiffre.'
-      : "Fin de semaine : confirme ces totaux pour qu'ils deviennent le \"Start\" de la semaine prochaine sur Beer Inventory.";
-    const confirmBtn = document.createElement('button');
-    confirmBtn.className = 'primary';
-    confirmBtn.textContent = 'Confirmer les totaux de fin de semaine';
-    confirmBtn.addEventListener('click', async ()=>{
+      ? '✓ Totaux de fin de semaine déjà confirmés — Enregistrer reconfirme avec les chiffres actuels.'
+      : "Fin de semaine : Enregistrer confirmera aussi ces totaux pour qu'ils deviennent le \"Start\" de la semaine prochaine sur Beer Inventory.";
+    wrap.appendChild(label);
+
+    const saveBtn = bottomBar.querySelector('button.primary');
+    saveBtn.addEventListener('click', async ()=>{
       const snapshot = {};
       inventaireItems.forEach((item, idx)=>{
         if(item.spacer) return;
@@ -3071,16 +3061,11 @@ function buildInventairePanel(){
         snapshot[key] = store[key].total;
       });
       sun.confirmedEndOfWeekStock = snapshot;
-      // Save the day's own numbers AND the confirmation as two separate writes — the
-      // confirmation never rides in the general save payload, so it can't get wiped
-      // out later by an ordinary Enregistrer click using a stale in-memory copy.
-      await saveData(document.createElement('div'));
+      // The confirmation never rides in the general save payload (see storeToWeekSettingsRow),
+      // so it's written here as its own separate call — this just happens on the same click now.
       await saveConfirmedEndOfWeekStock(state.week, snapshot);
       renderPanel();
     });
-    confirmBox.appendChild(label);
-    confirmBox.appendChild(confirmBtn);
-    wrap.appendChild(confirmBox);
   }
 
   return wrap;
@@ -3519,6 +3504,28 @@ commentsBtn.addEventListener('click', ()=>{
     return;
   }
   commentsDropdown.innerHTML = '';
+
+  const actionsRow = document.createElement('div');
+  actionsRow.style.cssText = 'display:flex; gap:8px; padding:8px; border-bottom:1px solid var(--line);';
+  const historyBtn = document.createElement('button');
+  historyBtn.className = 'print-btn'; historyBtn.textContent = "Voir l'historique";
+  historyBtn.addEventListener('click', ()=>{
+    commentsDropdown.style.display = 'none';
+    state.tab = 'comments'; renderTabs(); renderPanel();
+  });
+  const clearAllBtn = document.createElement('button');
+  clearAllBtn.className = 'print-btn'; clearAllBtn.textContent = 'Tout effacer';
+  clearAllBtn.disabled = unreadComments.length === 0;
+  clearAllBtn.addEventListener('click', async ()=>{
+    try{
+      await sb.from('comments').update({is_read:true}).eq('is_read', false);
+    }catch(e){}
+    await refreshComments();
+    commentsDropdown.style.display = 'none';
+  });
+  actionsRow.appendChild(historyBtn); actionsRow.appendChild(clearAllBtn);
+  commentsDropdown.appendChild(actionsRow);
+
   if(unreadComments.length === 0){
     const empty = document.createElement('div');
     empty.className = 'notif-empty';
