@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.872</title>
+<title>Registre du bar v 2.873</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -604,7 +604,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.5</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.6</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -3193,30 +3193,35 @@ function buildInventairePanel(){
   return wrap;
 }
 
-function buildOrderPanel(){
-  const wrap = document.createElement('div');
-  wrap.innerHTML = `
-    <h2>Commander</h2>
-    <div class="sub">Prototype — pas encore un système de caisse certifié. Juste pour visualiser le flux de commande et le reçu.</div>
-  `;
-
-  // Local order state, cleared once the order is completed.
-  const order = { bottles: {}, draft: {}, paymentMethod: '', amountTendered: '' };
+// Shared by every ordering surface (direct orders, tab rounds, pré-commandes review) —
+// one canonical way to compute line items from a {bottles, draft} order state object.
+function computeOrderLines(order){
+  const lines = [];
+  orderBottleItems.forEach(name=>{
+    const qty = order.bottles[name] || 0;
+    if(qty > 0) lines.push({ name, qty, unit_price: ORDER_BOTTLE_PRICE, line_total: round2(qty*ORDER_BOTTLE_PRICE) });
+  });
+  futTaps.forEach(tap=>{
+    const pinte = order.draft[`${tap}_pinte`] || 0;
+    if(pinte > 0) lines.push({ name: `${tap} (Pinte)`, qty: pinte, unit_price: ORDER_PINTE_PRICE, line_total: round2(pinte*ORDER_PINTE_PRICE) });
+    const pichet = order.draft[`${tap}_pichet`] || 0;
+    if(pichet > 0) lines.push({ name: `${tap} (Pichet)`, qty: pichet, unit_price: ORDER_PICHET_PRICE, line_total: round2(pichet*ORDER_PICHET_PRICE) });
+  });
+  return lines;
+}
+function newEmptyOrder(){
+  const order = { bottles: {}, draft: {} };
   orderBottleItems.forEach(name => order.bottles[name] = 0);
   futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
-
-  const layout = document.createElement('div');
-  layout.style.cssText = 'display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;';
-
-  // ---- Left: item selection ----
-  const menuCol = document.createElement('div');
-  menuCol.style.cssText = 'flex:1 1 340px; min-width:300px;';
-
-  const bottlesHeading = document.createElement('div');
-  bottlesHeading.className = 'sub'; bottlesHeading.style.fontWeight = '600';
-  bottlesHeading.textContent = 'Bouteilles';
-  menuCol.appendChild(bottlesHeading);
-
+  return order;
+}
+function totalsFor(lines){
+  const subtotal = round2(lines.reduce((s,l)=>s+l.line_total, 0));
+  const b = taxBreakdown(subtotal);
+  return { subtotal, tps: b.tps, tvq: b.tvq, total: round2(subtotal + b.tps + b.tvq) };
+}
+// Builds the bottle/draft stepper UI into `menuCol`, calling onChange() after every click.
+function buildItemPicker(menuCol, order, onChange){
   function buildStepperRow(label, price, getQty, setQty){
     const row = document.createElement('div');
     row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line);';
@@ -3232,31 +3237,294 @@ function buildOrderPanel(){
     qtyEl.textContent = getQty();
     const plusBtn = document.createElement('button');
     plusBtn.className = 'print-btn'; plusBtn.textContent = '+'; plusBtn.style.padding = '2px 10px';
-    minusBtn.addEventListener('click', ()=>{ setQty(Math.max(0, getQty()-1)); qtyEl.textContent = getQty(); updateReceipt(); });
-    plusBtn.addEventListener('click', ()=>{ setQty(getQty()+1); qtyEl.textContent = getQty(); updateReceipt(); });
+    minusBtn.addEventListener('click', ()=>{ setQty(Math.max(0, getQty()-1)); qtyEl.textContent = getQty(); onChange(); });
+    plusBtn.addEventListener('click', ()=>{ setQty(getQty()+1); qtyEl.textContent = getQty(); onChange(); });
     controls.appendChild(minusBtn); controls.appendChild(qtyEl); controls.appendChild(plusBtn);
     row.appendChild(nameEl); row.appendChild(controls);
     return row;
   }
-
+  const bottlesHeading = document.createElement('div');
+  bottlesHeading.className = 'sub'; bottlesHeading.style.fontWeight = '600';
+  bottlesHeading.textContent = 'Bouteilles';
+  menuCol.appendChild(bottlesHeading);
   orderBottleItems.forEach(name=>{
-    menuCol.appendChild(buildStepperRow(name, ORDER_BOTTLE_PRICE,
-      ()=>order.bottles[name], (v)=>order.bottles[name]=v));
+    menuCol.appendChild(buildStepperRow(name, ORDER_BOTTLE_PRICE, ()=>order.bottles[name], (v)=>order.bottles[name]=v));
   });
-
   const draftHeading = document.createElement('div');
   draftHeading.className = 'sub'; draftHeading.style.fontWeight = '600'; draftHeading.style.marginTop = '18px';
   draftHeading.textContent = 'Fût — Pinte / Pichet';
   menuCol.appendChild(draftHeading);
-
   futTaps.forEach(tap=>{
-    menuCol.appendChild(buildStepperRow(`${tap} — Pinte`, ORDER_PINTE_PRICE,
-      ()=>order.draft[`${tap}_pinte`], (v)=>order.draft[`${tap}_pinte`]=v));
-    menuCol.appendChild(buildStepperRow(`${tap} — Pichet`, ORDER_PICHET_PRICE,
-      ()=>order.draft[`${tap}_pichet`], (v)=>order.draft[`${tap}_pichet`]=v));
+    menuCol.appendChild(buildStepperRow(`${tap} — Pinte`, ORDER_PINTE_PRICE, ()=>order.draft[`${tap}_pinte`], (v)=>order.draft[`${tap}_pinte`]=v));
+    menuCol.appendChild(buildStepperRow(`${tap} — Pichet`, ORDER_PICHET_PRICE, ()=>order.draft[`${tap}_pichet`], (v)=>order.draft[`${tap}_pichet`]=v));
+  });
+}
+function renderReceiptHTML(lines, totals, extra){
+  let html = `<div style="text-align:center; font-weight:bold; margin-bottom:8px;">REÇU</div>`;
+  if(lines.length === 0){
+    html += `<div style="color:var(--ink-soft);">Aucun item sélectionné</div>`;
+  } else {
+    lines.forEach(l=>{
+      html += `<div style="display:flex; justify-content:space-between;"><span>${l.qty} × ${l.name}</span><span>$${l.line_total.toFixed(2)}</span></div>`;
+    });
+  }
+  html += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div>`;
+  html += `<div style="display:flex; justify-content:space-between;"><span>Sous-total</span><span>$${totals.subtotal.toFixed(2)}</span></div>`;
+  html += `<div style="display:flex; justify-content:space-between;"><span>TPS</span><span>$${totals.tps.toFixed(2)}</span></div>`;
+  html += `<div style="display:flex; justify-content:space-between;"><span>TVQ</span><span>$${totals.tvq.toFixed(2)}</span></div>`;
+  html += `<div style="display:flex; justify-content:space-between; font-weight:bold; margin-top:6px;"><span>TOTAL</span><span>$${totals.total.toFixed(2)}</span></div>`;
+  if(extra) html += extra;
+  return html;
+}
+
+function buildOrderPanel(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <h2>Commander</h2>
+    <div class="sub">Prototype — pas encore un système de caisse certifié. Juste pour visualiser le flux de commande et le reçu.</div>
+  `;
+
+  // ---------------- Pré-commandes (from clients via leur téléphone) ----------------
+  const preHeading = document.createElement('div');
+  preHeading.className = 'sub'; preHeading.style.fontWeight = '600';
+  preHeading.textContent = 'Pré-commandes';
+  wrap.appendChild(preHeading);
+  const preList = document.createElement('div');
+  wrap.appendChild(preList);
+
+  async function loadPreOrders(){
+    preList.innerHTML = '<div class="stub">Chargement...</div>';
+    try{
+      const { data, error } = await sb.from('pre_orders').select('*').eq('status','pending').order('created_at', {ascending:true});
+      if(error) throw error;
+      preList.innerHTML = '';
+      if(!data || data.length === 0){ preList.innerHTML = '<div class="stub">Aucune pré-commande en attente.</div>'; return; }
+      data.forEach(po=>{
+        const el = document.createElement('div');
+        el.style.cssText = 'padding:10px; margin-bottom:8px; border:1px solid var(--copper); font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.88rem;';
+        const when = new Date(po.created_at).toLocaleString('fr-CA', {dateStyle:'short', timeStyle:'short'});
+        const itemsStr = (po.items||[]).map(l=>`${l.qty} × ${l.name}`).join(', ');
+        el.innerHTML = `<strong>${po.seat}</strong> — ${when}<br>${itemsStr}<br>Total: $${Number(po.total).toFixed(2)}`;
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'primary'; confirmBtn.style.marginTop = '8px';
+        confirmBtn.textContent = 'Confirmer';
+        confirmBtn.addEventListener('click', async ()=>{
+          confirmBtn.disabled = true;
+          try{
+            await sb.from('orders').insert({
+              bartender_name: state.loggedInName || null,
+              items: po.items, subtotal: po.subtotal, tps: po.tps, tvq: po.tvq, total: po.total,
+              payment_method: null, amount_tendered: null, change_given: null
+            });
+            await sb.from('pre_orders').update({ status:'confirmed', confirmed_at: new Date().toISOString() }).eq('id', po.id);
+            loadPreOrders();
+          }catch(e){ confirmBtn.disabled = false; }
+        });
+        el.appendChild(confirmBtn);
+        preList.appendChild(el);
+      });
+    }catch(e){ preList.innerHTML = '<div class="stub">Erreur de chargement.</div>'; }
+  }
+  loadPreOrders();
+
+  // ---------------- Tabs (bills that stay open across several rounds) ----------------
+  const tabsHeading = document.createElement('div');
+  tabsHeading.className = 'sub'; tabsHeading.style.fontWeight = '600'; tabsHeading.style.marginTop = '26px';
+  tabsHeading.textContent = 'Tabs';
+  wrap.appendChild(tabsHeading);
+  const newTabBtn = document.createElement('button');
+  newTabBtn.className = 'print-btn'; newTabBtn.style.margin = '6px 0';
+  newTabBtn.textContent = '+ Nouvelle tab';
+  wrap.appendChild(newTabBtn);
+  const tabsList = document.createElement('div');
+  wrap.appendChild(tabsList);
+
+  newTabBtn.addEventListener('click', async ()=>{
+    const name = prompt('Nom du client :');
+    if(!name || !name.trim()) return;
+    await sb.from('tabs').insert({ client_name: name.trim(), status:'open', rounds: [] });
+    loadTabs();
   });
 
-  // ---- Right: live receipt + payment ----
+  async function loadTabs(){
+    tabsList.innerHTML = '<div class="stub">Chargement...</div>';
+    try{
+      const { data, error } = await sb.from('tabs').select('*').eq('status','open').order('created_at', {ascending:true});
+      if(error) throw error;
+      tabsList.innerHTML = '';
+      if(!data || data.length === 0){ tabsList.innerHTML = '<div class="stub">Aucune tab ouverte.</div>'; return; }
+      data.forEach(tab=>buildTabCard(tab));
+    }catch(e){ tabsList.innerHTML = '<div class="stub">Erreur de chargement.</div>'; }
+  }
+
+  function buildTabCard(tab){
+    const rounds = tab.rounds || [];
+    const runningTotal = round2(rounds.reduce((s,r)=>s+r.total, 0));
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid var(--line); padding:12px; margin-bottom:10px; font-family:"Avenir Next","Segoe UI",sans-serif;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+    head.innerHTML = `<strong>${tab.client_name}</strong><span>${rounds.length} commande${rounds.length!==1?'s':''} — $${runningTotal.toFixed(2)}</span>`;
+    card.appendChild(head);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex; gap:8px; margin-top:8px;';
+    const addBtn = document.createElement('button');
+    addBtn.className = 'print-btn'; addBtn.textContent = '+ Ajouter une commande';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'primary'; closeBtn.textContent = 'Fermer la tab';
+    btnRow.appendChild(addBtn); btnRow.appendChild(closeBtn);
+    card.appendChild(btnRow);
+
+    const expandArea = document.createElement('div');
+    card.appendChild(expandArea);
+
+    addBtn.addEventListener('click', ()=>{
+      if(expandArea.dataset.mode === 'add'){ expandArea.innerHTML = ''; expandArea.dataset.mode = ''; return; }
+      expandArea.dataset.mode = 'add';
+      expandArea.innerHTML = '';
+      const roundOrder = newEmptyOrder();
+      const roundLayout = document.createElement('div');
+      roundLayout.style.cssText = 'display:flex; gap:20px; flex-wrap:wrap; margin-top:10px;';
+      const roundMenu = document.createElement('div'); roundMenu.style.cssText = 'flex:1 1 300px; min-width:260px;';
+      const roundReceipt = document.createElement('div');
+      roundReceipt.style.cssText = 'flex:0 0 260px; font-family:"Courier New",monospace; font-size:0.82rem; border:1px dashed var(--ink); padding:12px; background:#fff;';
+      roundLayout.appendChild(roundMenu); roundLayout.appendChild(roundReceipt);
+      expandArea.appendChild(roundLayout);
+
+      function updateRoundReceipt(){
+        const lines = computeOrderLines(roundOrder);
+        const totals = totalsFor(lines);
+        roundReceipt.innerHTML = renderReceiptHTML(lines, totals);
+        return { lines, totals };
+      }
+      buildItemPicker(roundMenu, roundOrder, updateRoundReceipt);
+      updateRoundReceipt();
+
+      const addRoundBtn = document.createElement('button');
+      addRoundBtn.className = 'primary'; addRoundBtn.style.marginTop = '10px';
+      addRoundBtn.textContent = 'Ajouter à la tab';
+      const addRoundStatus = document.createElement('span');
+      addRoundStatus.className = 'status'; addRoundStatus.style.marginLeft = '8px';
+      expandArea.appendChild(addRoundBtn); expandArea.appendChild(addRoundStatus);
+
+      addRoundBtn.addEventListener('click', async ()=>{
+        const { lines, totals } = updateRoundReceipt();
+        if(lines.length === 0){ addRoundStatus.textContent = 'Ajoute au moins un item.'; return; }
+        addRoundBtn.disabled = true;
+        try{
+          const newRounds = [...rounds, { ...totals, items: lines, created_at: new Date().toISOString() }];
+          await sb.from('tabs').update({ rounds: newRounds }).eq('id', tab.id);
+          loadTabs();
+        }catch(e){ addRoundStatus.textContent = 'Erreur — réessaie.'; addRoundBtn.disabled = false; }
+      });
+    });
+
+    closeBtn.addEventListener('click', ()=>{
+      if(expandArea.dataset.mode === 'close'){ expandArea.innerHTML = ''; expandArea.dataset.mode = ''; return; }
+      expandArea.dataset.mode = 'close';
+      expandArea.innerHTML = '';
+      if(rounds.length === 0){
+        expandArea.innerHTML = '<div class="stub">Aucune commande sur cette tab — ajoute au moins une commande avant de fermer.</div>';
+        return;
+      }
+      const allLines = rounds.flatMap(r=>r.items);
+      const totals = { subtotal: round2(rounds.reduce((s,r)=>s+r.subtotal,0)), tps: round2(rounds.reduce((s,r)=>s+r.tps,0)),
+                        tvq: round2(rounds.reduce((s,r)=>s+r.tvq,0)), total: runningTotal };
+      const closeReceipt = document.createElement('div');
+      closeReceipt.style.cssText = 'font-family:"Courier New",monospace; font-size:0.82rem; border:1px dashed var(--ink); padding:12px; background:#fff; max-width:300px;';
+      const localPayment = { method: '', tendered: '' };
+      function renderClose(){
+        let extra = '';
+        if(localPayment.method){
+          extra += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div><div>Paiement: ${localPayment.method}</div>`;
+          if(localPayment.method === 'Cash' && localPayment.tendered !== ''){
+            const tendered = Number(localPayment.tendered)||0;
+            const change = round2(tendered - totals.total);
+            extra += `<div style="display:flex; justify-content:space-between;"><span>Reçu</span><span>$${tendered.toFixed(2)}</span></div>`;
+            extra += `<div style="display:flex; justify-content:space-between; font-weight:bold;"><span>Monnaie</span><span>$${change.toFixed(2)}</span></div>`;
+          }
+        }
+        closeReceipt.innerHTML = renderReceiptHTML(allLines, totals, extra);
+      }
+      renderClose();
+      expandArea.appendChild(closeReceipt);
+
+      const methodRow = document.createElement('div');
+      methodRow.className = 'shift-row'; methodRow.style.marginTop = '10px';
+      ['Cash','Carte','Interac'].forEach(method=>{
+        const field = document.createElement('label');
+        field.style.cssText = 'display:flex; align-items:center; gap:6px; margin-right:16px; font-size:0.88rem;';
+        const radio = document.createElement('input');
+        radio.type = 'radio'; radio.name = `tabPayment${tab.id}`; radio.value = method;
+        radio.addEventListener('change', ()=>{ localPayment.method = method; renderClose(); });
+        field.appendChild(radio); field.appendChild(document.createTextNode(method));
+        methodRow.appendChild(field);
+      });
+      expandArea.appendChild(methodRow);
+      const cashWrap = document.createElement('div');
+      expandArea.appendChild(cashWrap);
+      // re-render cash field whenever method changes
+      const origRenderClose = renderClose;
+      renderClose = function(){
+        origRenderClose();
+        cashWrap.innerHTML = '';
+        if(localPayment.method === 'Cash'){
+          const field = document.createElement('div'); field.className = 'field';
+          field.innerHTML = `<label>Montant reçu</label>`;
+          const input = document.createElement('input');
+          input.type = 'number'; input.className = 'num'; input.value = localPayment.tendered;
+          input.addEventListener('input', ()=>{ localPayment.tendered = input.value; renderClose(); });
+          field.appendChild(input);
+          cashWrap.appendChild(field);
+        }
+      };
+      renderClose();
+
+      const finalizeBtn = document.createElement('button');
+      finalizeBtn.className = 'primary'; finalizeBtn.style.marginTop = '10px';
+      finalizeBtn.textContent = 'Finaliser et fermer la tab';
+      const finalizeStatus = document.createElement('span');
+      finalizeStatus.className = 'status'; finalizeStatus.style.marginLeft = '8px';
+      expandArea.appendChild(finalizeBtn); expandArea.appendChild(finalizeStatus);
+
+      finalizeBtn.addEventListener('click', async ()=>{
+        if(!localPayment.method){ finalizeStatus.textContent = 'Choisis un mode de paiement.'; return; }
+        const tendered = localPayment.method === 'Cash' ? Number(localPayment.tendered)||0 : null;
+        const change = tendered !== null ? round2(tendered - totals.total) : null;
+        finalizeBtn.disabled = true;
+        try{
+          await sb.from('orders').insert({
+            bartender_name: state.loggedInName || null,
+            items: allLines, subtotal: totals.subtotal, tps: totals.tps, tvq: totals.tvq, total: totals.total,
+            payment_method: localPayment.method, amount_tendered: tendered, change_given: change
+          });
+          await sb.from('tabs').update({
+            status: 'closed', closed_at: new Date().toISOString(),
+            payment_method: localPayment.method, amount_tendered: tendered, change_given: change
+          }).eq('id', tab.id);
+          loadTabs();
+        }catch(e){ finalizeStatus.textContent = 'Erreur — réessaie.'; finalizeBtn.disabled = false; }
+      });
+    });
+
+    tabsList.appendChild(card);
+  }
+  loadTabs();
+
+  // ---------------- Commande directe (walk-up orders rung in right away) ----------------
+  const directHeading = document.createElement('div');
+  directHeading.className = 'sub'; directHeading.style.fontWeight = '600'; directHeading.style.marginTop = '26px';
+  directHeading.textContent = 'Commande directe';
+  wrap.appendChild(directHeading);
+
+  const order = newEmptyOrder();
+  order.paymentMethod = ''; order.amountTendered = '';
+
+  const layout = document.createElement('div');
+  layout.style.cssText = 'display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;';
+  const menuCol = document.createElement('div');
+  menuCol.style.cssText = 'flex:1 1 340px; min-width:300px;';
   const receiptCol = document.createElement('div');
   receiptCol.style.cssText = 'flex:0 0 300px; font-family:"Courier New",monospace; font-size:0.85rem; border:1px dashed var(--ink); padding:16px; background:#fff;';
   layout.appendChild(menuCol); layout.appendChild(receiptCol);
@@ -3329,54 +3597,23 @@ function buildOrderPanel(){
   }
   loadHistory();
 
-  function computeOrderLines(){
-    const lines = [];
-    orderBottleItems.forEach(name=>{
-      const qty = order.bottles[name];
-      if(qty > 0) lines.push({ name, qty, unit_price: ORDER_BOTTLE_PRICE, line_total: round2(qty*ORDER_BOTTLE_PRICE) });
-    });
-    futTaps.forEach(tap=>{
-      const pinte = order.draft[`${tap}_pinte`];
-      if(pinte > 0) lines.push({ name: `${tap} (Pinte)`, qty: pinte, unit_price: ORDER_PINTE_PRICE, line_total: round2(pinte*ORDER_PINTE_PRICE) });
-      const pichet = order.draft[`${tap}_pichet`];
-      if(pichet > 0) lines.push({ name: `${tap} (Pichet)`, qty: pichet, unit_price: ORDER_PICHET_PRICE, line_total: round2(pichet*ORDER_PICHET_PRICE) });
-    });
-    return lines;
-  }
-
   function updateReceipt(){
-    const lines = computeOrderLines();
-    const subtotal = round2(lines.reduce((s,l)=>s+l.line_total, 0));
-    const b = taxBreakdown(subtotal);
-    const total = round2(subtotal + b.tps + b.tvq);
-
-    let html = `<div style="text-align:center; font-weight:bold; margin-bottom:8px;">REÇU</div>`;
-    if(lines.length === 0){
-      html += `<div style="color:var(--ink-soft);">Aucun item sélectionné</div>`;
-    } else {
-      lines.forEach(l=>{
-        html += `<div style="display:flex; justify-content:space-between;"><span>${l.qty} × ${l.name}</span><span>$${l.line_total.toFixed(2)}</span></div>`;
-      });
-    }
-    html += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div>`;
-    html += `<div style="display:flex; justify-content:space-between;"><span>Sous-total</span><span>$${subtotal.toFixed(2)}</span></div>`;
-    html += `<div style="display:flex; justify-content:space-between;"><span>TPS</span><span>$${b.tps.toFixed(2)}</span></div>`;
-    html += `<div style="display:flex; justify-content:space-between;"><span>TVQ</span><span>$${b.tvq.toFixed(2)}</span></div>`;
-    html += `<div style="display:flex; justify-content:space-between; font-weight:bold; margin-top:6px;"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>`;
-
+    const lines = computeOrderLines(order);
+    const totals = totalsFor(lines);
+    let extra = '';
     if(order.paymentMethod){
-      html += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div>`;
-      html += `<div>Paiement: ${order.paymentMethod}</div>`;
+      extra += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div><div>Paiement: ${order.paymentMethod}</div>`;
       if(order.paymentMethod === 'Cash' && order.amountTendered !== ''){
         const tendered = Number(order.amountTendered)||0;
-        const change = round2(tendered - total);
-        html += `<div style="display:flex; justify-content:space-between;"><span>Reçu</span><span>$${tendered.toFixed(2)}</span></div>`;
-        html += `<div style="display:flex; justify-content:space-between; font-weight:bold;"><span>Monnaie</span><span>$${change.toFixed(2)}</span></div>`;
+        const change = round2(tendered - totals.total);
+        extra += `<div style="display:flex; justify-content:space-between;"><span>Reçu</span><span>$${tendered.toFixed(2)}</span></div>`;
+        extra += `<div style="display:flex; justify-content:space-between; font-weight:bold;"><span>Monnaie</span><span>$${change.toFixed(2)}</span></div>`;
       }
     }
-    receiptCol.innerHTML = html;
-    return { lines, subtotal, tps:b.tps, tvq:b.tvq, total };
+    receiptCol.innerHTML = renderReceiptHTML(lines, totals, extra);
+    return { lines, ...totals };
   }
+  buildItemPicker(menuCol, order, updateReceipt);
 
   completeBtn.addEventListener('click', async ()=>{
     const { lines, subtotal, tps, tvq, total } = updateReceipt();
@@ -3393,10 +3630,7 @@ function buildOrderPanel(){
         amount_tendered: tendered, change_given: change
       });
       completeStatus.textContent = 'Commande enregistrée ✓';
-      orderBottleItems.forEach(name => order.bottles[name] = 0);
-      futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
-      order.paymentMethod = ''; order.amountTendered = '';
-      renderPanel(); // full rebuild — resets steppers, radios, receipt, and refreshes history
+      renderPanel(); // full rebuild — resets steppers, radios, receipt, and refreshes history/tabs/pré-commandes
     }catch(e){
       completeStatus.textContent = 'Erreur — réessaie.';
     }
