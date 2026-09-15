@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.871</title>
+<title>Registre du bar v 2.872</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -604,7 +604,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.5</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -670,8 +670,11 @@
 <script>
 // ---------- Data model ----------
 // Fût (draft/keg) — a simple tally, not a full reconciled inventory like the bottled beers.
-const futTaps = ['Budweiser', 'Stella', 'Michelob', 'Chippe'];
-const futPours = ['Shot', 'Bock', 'Verre', 'Pichet'];
+// Fût tap names — persisted in Supabase (fut_taps table), renameable by Boss,
+// loaded once at startup like the schedule. Falls back to these defaults if
+// the table isn't reachable yet.
+let futTaps = ['Budweiser', 'Stella', 'Michelob', 'Chippe'];
+const futPours = ['Shot', 'Buck', 'Verre', 'Pichet'];
 
 const inventaireItems = [
   {name:"Budweiser", expected:96}, {name:"Bud Light", expected:48},
@@ -679,7 +682,7 @@ const inventaireItems = [
   {name:"Mich. Ultra", expected:24}, {name:"Corona 0%", expected:24},
   {name:"Corona", expected:48}, {name:"White Claw", expected:40},
   {spacer:true}, {spacer:true},
-  {name:"Biere inter", expected:40}, {name:"Smirnoff Ice", expected:8},
+  {spacer:true}, {name:"Smirnoff Ice", expected:8},
   {name:"Red Bull", expected:16}, {name:"Rev", expected:8},
   {spacer:true}, {spacer:true},
   {name:"Eau", expected:16}, {name:"Perrier", expected:8},
@@ -703,7 +706,7 @@ const deliveryItems = [
 // menu always matches what's actually tracked. Prices are placeholders until real
 // pricing is provided; this is a visual mockup of the ordering flow, not yet wired
 // to any certified sales-recording system.
-const orderBottleItems = ["Budweiser","Bud Light","Bleu","Labatt 50","Mich. Ultra","Corona 0%","Corona","White Claw","Biere inter","Smirnoff Ice","Red Bull","Rev"];
+const orderBottleItems = ["Budweiser","Bud Light","Bleu","Labatt 50","Mich. Ultra","Corona 0%","Corona","White Claw","Smirnoff Ice","Red Bull","Rev"];
 const ORDER_BOTTLE_PRICE = 6.50;
 const ORDER_PINTE_PRICE = 8.00;
 const ORDER_PICHET_PRICE = 22.00;
@@ -752,6 +755,16 @@ async function loadScheduleFromSupabase(){
     });
     staffSchedule = loaded;
   }catch(e){ /* keep the empty fallback; defaultBartender() handles it gracefully */ }
+}
+async function loadFutTapsFromSupabase(){
+  try{
+    const { data, error } = await sb.from('fut_taps').select('*').order('tap_index', {ascending:true});
+    if(error) throw error;
+    if(data && data.length){ futTaps = data.map(r=>r.name); }
+  }catch(e){ /* keep the default fallback */ }
+}
+async function saveFutTapName(tapIndex, name){
+  await sb.from('fut_taps').upsert({ tap_index: tapIndex, name }, {onConflict:'tap_index'});
 }
 
 // Which real calendar weeks are "A" vs "B" is not yet confirmed — placeholder anchor below.
@@ -1111,8 +1124,19 @@ async function fetchInventaireDay(weekK, dayN){
     return row.items || null;
   }catch(e){ return null; }
 }
+// Fetches one specific shift's Fût data — needed when yesterday's Night shift
+// (which today's Day Fût Début chains from) isn't the currently-loaded week.
+async function fetchShiftFut(weekK, dayN, shiftT){
+  try{
+    const { data: row, error } = await sb.from('shifts').select('fut').eq('week_key', weekK).eq('day', dayN).eq('shift_type', shiftT).maybeSingle();
+    if(error || !row) return null;
+    return row.fut || null;
+  }catch(e){ return null; }
+}
 // Cache for #5 Inventory Summary's cross-week lookup (Monday needs last week's Sunday).
 let prevSundayInventaireCache = { weekKey: null, items: null };
+// Cache for Stock du quart's Fût Début chain (Day shift needs yesterday's Night Fin).
+let futYesterdayCache = { key: null, data: null };
 
 function weekBucket(weekK){
   if(!data[weekK]) data[weekK] = {};
@@ -2462,7 +2486,7 @@ function buildShiftPanel(shiftType){
     jnRow.className = 'shift-row';
 
     const jnField = document.createElement('div'); jnField.className='field';
-    jnField.innerHTML = `<label>${shiftType==='bartDay' ? 'Jour' : 'Nuit'}</label>`;
+    jnField.innerHTML = `<label>${shiftType==='bartDay' ? 'Totale de jour' : 'Totale de nuit'}</label>`;
     const jnInput = document.createElement('input');
     jnInput.type='number'; jnInput.className='num';
     jnInput.value = shiftType==='bartDay' ? store.jour : store.nuit;
@@ -2789,8 +2813,10 @@ function buildStockSection(shiftType, bucket){
     Object.keys(leftCellEls).forEach(refreshRow);
   }
 
-  // Fût (draft) — just a tally, no reconciliation, no Attendu. Début/Ajout/Fin/Total
-  // per tap × format, same math as the bottled beers above but nothing chains anywhere.
+  // Fût — Début/Fin only (no Ajout, no Vendu calculé, just a running count).
+  // Chains like the bottled beers: Night's Début comes from today's Day Fin (same day,
+  // already in memory); Day's Début comes from yesterday's Night Fin (may cross into
+  // last week, needs a fetch).
   if(!store.fut) store.fut = {};
   const futHeading = document.createElement('h2');
   futHeading.textContent = 'Fût';
@@ -2798,23 +2824,79 @@ function buildStockSection(shiftType, bucket){
   section.appendChild(futHeading);
   const futSub = document.createElement('div');
   futSub.className = 'sub';
-  futSub.textContent = 'Simple registre — pas de rapprochement avec les autres quarts, juste un suivi.';
+  futSub.textContent = 'Simple registre — Début se remplit automatiquement à partir du quart précédent, éditable si besoin.';
   section.appendChild(futSub);
 
   const futTable = document.createElement('table');
   futTable.className = 'form-table';
-  futTable.innerHTML = `<thead><tr><th>Fût / Format</th><th>Début</th><th>Ajout</th><th>Fin</th><th>Vendu (calculé)</th></tr></thead>`;
+  futTable.innerHTML = `<thead><tr><th>Fût / Format</th><th>Début</th><th>Fin</th></tr></thead>`;
   const futBody = document.createElement('tbody');
+
+  let futYesterdayNight = null; // only fetched for the Day shift (may cross into last week)
+  const futPrevRef = isDay ? previousDayRef(state.week, state.day) : null;
+  const futCacheKey = isDay ? `${futPrevRef.weekKey}_${futPrevRef.day}` : null;
+  if(isDay && futYesterdayCache.key === futCacheKey){
+    futYesterdayNight = futYesterdayCache.data;
+  }
+
+  function computeFutDebutSource(tapIdx, pourIdx){
+    const key = `tap${tapIdx}_pour${pourIdx}`;
+    if(isDay){
+      if(futYesterdayNight === null) return undefined; // loading
+      return numOrZero(futYesterdayNight[key]?.fin);
+    }
+    return numOrZero(bucket.bartDay?.fut?.[key]?.fin);
+  }
 
   futTaps.forEach((tap, tapIdx)=>{
     const tapRow = document.createElement('tr');
-    tapRow.innerHTML = `<td colspan="5" style="font-weight:600; background:#EDEAE2;">${tap}</td>`;
+    const tdTapName = document.createElement('td');
+    tdTapName.colSpan = 3;
+    tdTapName.style.cssText = 'font-weight:600; background:#EDEAE2;';
+
+    if(state.role === 'boss'){
+      const tapNameWrap = document.createElement('div');
+      tapNameWrap.style.cssText = 'display:flex; align-items:center; gap:8px;';
+      const nameLabel = document.createElement('span');
+      nameLabel.textContent = tap;
+      const editCheck = document.createElement('input');
+      editCheck.type = 'checkbox';
+      const editInput = document.createElement('input');
+      editInput.type = 'text'; editInput.value = tap;
+      editInput.style.cssText = 'display:none; font-weight:600;';
+      editCheck.addEventListener('change', async ()=>{
+        if(editCheck.checked){
+          nameLabel.style.display = 'none';
+          editInput.style.display = 'inline-block';
+        } else {
+          const newName = editInput.value.trim();
+          if(newName && newName !== tap){
+            futTaps[tapIdx] = newName;
+            await saveFutTapName(tapIdx, newName);
+            renderPanel(); // rebuild so every reference to this tap's name updates
+            return;
+          }
+          nameLabel.style.display = 'inline';
+          editInput.style.display = 'none';
+        }
+      });
+      tapNameWrap.appendChild(editCheck); tapNameWrap.appendChild(nameLabel); tapNameWrap.appendChild(editInput);
+      tdTapName.appendChild(tapNameWrap);
+    } else {
+      tdTapName.textContent = tap;
+    }
+    tapRow.appendChild(tdTapName);
     futBody.appendChild(tapRow);
 
     futPours.forEach((pour, pourIdx)=>{
       const key = `tap${tapIdx}_pour${pourIdx}`;
-      if(!store.fut[key]) store.fut[key] = { debut:"", ajout:"", fin:"", total:"" };
+      if(!store.fut[key]) store.fut[key] = { debut:"", fin:"", debutManual:false };
       const rowStore = store.fut[key];
+
+      if(!rowStore.debutManual && rowStore.debut === ""){
+        const auto = computeFutDebutSource(tapIdx, pourIdx);
+        if(auto !== undefined) rowStore.debut = auto;
+      }
 
       const tr = document.createElement('tr');
       const tdName = document.createElement('td'); tdName.textContent = `  ${pour}`; tdName.style.paddingLeft='18px';
@@ -2824,37 +2906,43 @@ function buildStockSection(shiftType, bucket){
       inDebut.type='number'; inDebut.step='1'; inDebut.className='num'; inDebut.value = rowStore.debut;
       enforceWholeNumber(inDebut);
 
-      const tdAjout = document.createElement('td');
-      const inAjout = document.createElement('input');
-      inAjout.type='number'; inAjout.step='1'; inAjout.className='num'; inAjout.value = rowStore.ajout;
-      enforceWholeNumber(inAjout);
-
       const tdFin = document.createElement('td');
       const inFin = document.createElement('input');
       inFin.type='number'; inFin.step='1'; inFin.className='num'; inFin.value = rowStore.fin;
       enforceWholeNumber(inFin);
 
-      const tdTotal = document.createElement('td');
-      const inTotal = document.createElement('input');
-      inTotal.type='number'; inTotal.step='1'; inTotal.className='num calc'; inTotal.value = rowStore.total;
-      enforceWholeNumber(inTotal);
+      inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; rowStore.debutManual = true; });
+      inFin.addEventListener('input', ()=>{ rowStore.fin = inFin.value; });
 
-      function recalcFutTotal(){
-        rowStore.total = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajout) - numOrZero(rowStore.fin));
-        inTotal.value = rowStore.total;
-      }
-      inDebut.addEventListener('input', ()=>{ rowStore.debut = inDebut.value; recalcFutTotal(); });
-      inAjout.addEventListener('input', ()=>{ rowStore.ajout = inAjout.value; recalcFutTotal(); });
-      inFin.addEventListener('input', ()=>{ rowStore.fin = inFin.value; recalcFutTotal(); });
-      inTotal.addEventListener('input', ()=>{ rowStore.total = inTotal.value; });
-
-      tdDebut.appendChild(inDebut); tdAjout.appendChild(inAjout); tdFin.appendChild(inFin); tdTotal.appendChild(inTotal);
-      tr.appendChild(tdName); tr.appendChild(tdDebut); tr.appendChild(tdAjout); tr.appendChild(tdFin); tr.appendChild(tdTotal);
+      tdDebut.appendChild(inDebut); tdFin.appendChild(inFin);
+      tr.appendChild(tdName); tr.appendChild(tdDebut); tr.appendChild(tdFin);
       futBody.appendChild(tr);
     });
   });
   futTable.appendChild(futBody);
   section.appendChild(futTable);
+
+  if(isDay && futYesterdayCache.key !== futCacheKey){
+    fetchShiftFut(futPrevRef.weekKey, futPrevRef.day, 'bartNight').then(fut=>{
+      futYesterdayCache = { key: futCacheKey, data: fut || {} };
+      renderPanel(); // now the cache hits, so this won't loop
+    });
+  }
+
+  if(state.role === 'boss'){
+    const addTapBtn = document.createElement('button');
+    addTapBtn.className = 'print-btn no-print'; addTapBtn.style.marginTop = '10px';
+    addTapBtn.textContent = '+ Ajouter un fût';
+    addTapBtn.addEventListener('click', async ()=>{
+      const name = prompt('Nom du nouveau fût :');
+      if(!name || !name.trim()) return;
+      const newIndex = futTaps.length;
+      futTaps.push(name.trim());
+      await saveFutTapName(newIndex, name.trim());
+      renderPanel();
+    });
+    section.appendChild(addTapBtn);
+  }
 
   return section;
 }
@@ -3605,6 +3693,7 @@ async function findPendingReviewsLive(){
 // Load PINs and the staff schedule once at startup; individual weeks load on demand (login, week switch).
 loadPinsFromSupabase();
 loadScheduleFromSupabase();
+loadFutTapsFromSupabase();
 try{
   const savedTheme = localStorage.getItem('barTheme');
   if(savedTheme) applyTheme(savedTheme);
