@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Commander — Registre du bar</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --paper:#F3EFE7;
+    --ink:#2B2622;
+    --ink-soft:#6B6259;
+    --line:#D8D0C2;
+    --copper:#8C5A2B;
+    --copper-deep:#6E4520;
+    --input-bg:#FDFCF9;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Avenir Next","Segoe UI",sans-serif;
+    padding:16px;
+    max-width:480px;
+    margin-left:auto; margin-right:auto;
+  }
+  h1{ font-family:Georgia,serif; font-size:1.4rem; margin:0 0 4px; }
+  .sub{ color:var(--ink-soft); font-size:0.85rem; margin-bottom:18px; }
+
+  /* ---- Seat picker ---- */
+  .floor{ margin-bottom:16px; }
+  .tables-row{ display:flex; gap:6px; justify-content:center; margin-bottom:18px; flex-wrap:wrap; }
+  .seat-btn{
+    border:1px solid var(--ink);
+    background:var(--input-bg);
+    color:var(--ink);
+    padding:10px 6px;
+    font-size:0.82rem;
+    cursor:pointer;
+    text-align:center;
+    border-radius:2px;
+  }
+  .seat-btn.selected{ background:var(--copper); color:#fff; border-color:var(--copper); }
+  .tables-row .seat-btn{ width:56px; }
+  .bar-area{
+    border:2px solid var(--ink);
+    padding:14px;
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:10px;
+  }
+  .bar-top-row{ display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
+  .bar-label{ font-weight:600; font-size:0.8rem; color:var(--ink-soft); margin:4px 0; }
+  .bar-side-row{ display:flex; flex-direction:column; gap:6px; align-self:flex-start; }
+  .pool-btn{ width:70px; height:120px; }
+  .floor-bottom{ display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-top:10px; }
+
+  .confirm-seat-box{
+    border:1px solid var(--copper);
+    padding:14px;
+    margin-bottom:16px;
+    text-align:center;
+  }
+  .confirm-seat-box .seat-name{ font-weight:700; font-size:1.2rem; margin:6px 0; }
+
+  /* ---- Ordering ---- */
+  .section-heading{ font-weight:600; font-size:0.9rem; margin:18px 0 6px; }
+  .item-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 0; border-bottom:1px solid var(--line); font-size:0.9rem;
+  }
+  .item-controls{ display:flex; align-items:center; gap:10px; }
+  .step-btn{
+    border:1px solid var(--ink); background:var(--input-bg); color:var(--ink);
+    width:32px; height:32px; font-size:1.1rem; cursor:pointer; border-radius:2px;
+  }
+  .step-btn:active{ background:var(--copper); color:#fff; }
+  .qty{ min-width:1.6em; text-align:center; font-variant-numeric:tabular-nums; font-weight:600; }
+
+  .receipt{
+    font-family:"Courier New",monospace; font-size:0.85rem;
+    border:1px dashed var(--ink); padding:14px; background:var(--input-bg);
+    margin-top:16px;
+  }
+  .receipt-line{ display:flex; justify-content:space-between; padding:2px 0; }
+  .receipt-rule{ border-top:1px dashed var(--ink); margin:8px 0; }
+  .receipt-total{ font-weight:bold; margin-top:6px; }
+
+  button.primary{
+    background:var(--copper); color:#fff; border:none;
+    padding:12px 20px; font-size:1rem; font-weight:600; cursor:pointer;
+    margin-top:14px; width:100%;
+  }
+  button.primary:hover{ background:var(--copper-deep); }
+  button.primary:disabled{ opacity:0.5; }
+  button.link-btn{
+    background:none; border:none; color:var(--copper); text-decoration:underline;
+    font-size:0.85rem; cursor:pointer; padding:4px;
+  }
+  .status{ text-align:center; font-size:0.85rem; color:var(--ink-soft); margin-top:8px; }
+</style>
+</head>
+<body>
+
+<h1>Commander de votre place</h1>
+<div class="sub">Sélectionnez votre place, puis passez votre commande — elle sera confirmée par le bar.</div>
+
+<div id="seatConfirmArea"></div>
+<div id="seatPickerArea"></div>
+<div id="orderArea" style="display:none;"></div>
+
+<script>
+const SUPABASE_URL = 'https://tbnblorbmxthkbbdtekg.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_2okRiKf4KoyruEgW6lSYLg_lvU0mKNv';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function round2(n){ return Math.round(n*100)/100; }
+function taxBreakdown(subtotal){
+  const s = Number(subtotal)||0;
+  return { subtotal: round2(s), tps: round2(s*0.05), tvq: round2(s*0.09975) };
+}
+
+const orderBottleItems = ["Budweiser","Bud Light","Bleu","Labatt 50","Mich. Ultra","Corona 0%","Corona","White Claw","Smirnoff Ice","Red Bull","Rev"];
+const futTaps = ['Budweiser', 'Stella', 'Michelob', 'Chippe'];
+const ORDER_BOTTLE_PRICE = 6.50;
+const ORDER_PINTE_PRICE = 8.00;
+const ORDER_PICHET_PRICE = 22.00;
+
+const SEAT_KEY = 'registre_bar_seat';
+
+const seatConfirmArea = document.getElementById('seatConfirmArea');
+const seatPickerArea = document.getElementById('seatPickerArea');
+const orderArea = document.getElementById('orderArea');
+
+function getSavedSeat(){ return localStorage.getItem(SEAT_KEY) || null; }
+function saveSeat(seat){ localStorage.setItem(SEAT_KEY, seat); }
+
+function renderSeatConfirm(seat){
+  seatConfirmArea.innerHTML = '';
+  seatPickerArea.style.display = 'none';
+  const box = document.createElement('div');
+  box.className = 'confirm-seat-box';
+  box.innerHTML = `<div>Vous êtes à</div><div class="seat-name">${seat}</div>`;
+  const changeBtn = document.createElement('button');
+  changeBtn.className = 'link-btn';
+  changeBtn.textContent = "Ce n'est pas ma place — changer";
+  changeBtn.addEventListener('click', ()=>{
+    seatPickerArea.style.display = 'block';
+    seatConfirmArea.innerHTML = '';
+    orderArea.style.display = 'none';
+  });
+  box.appendChild(document.createElement('br'));
+  box.appendChild(changeBtn);
+  seatConfirmArea.appendChild(box);
+  showOrderArea(seat);
+}
+
+function buildSeatBtn(label){
+  const btn = document.createElement('button');
+  btn.className = 'seat-btn';
+  btn.textContent = label;
+  btn.addEventListener('click', ()=>{
+    saveSeat(label);
+    renderSeatConfirm(label);
+  });
+  return btn;
+}
+
+function renderSeatPicker(){
+  seatPickerArea.innerHTML = '';
+  const floor = document.createElement('div');
+  floor.className = 'floor';
+
+  const tablesRow = document.createElement('div');
+  tablesRow.className = 'tables-row';
+  for(let i=1;i<=6;i++) tablesRow.appendChild(buildSeatBtn(`T${i}`));
+  floor.appendChild(tablesRow);
+
+  const bottomRow = document.createElement('div');
+  bottomRow.className = 'floor-bottom';
+
+  const barArea = document.createElement('div');
+  barArea.className = 'bar-area';
+  barArea.style.flex = '1';
+
+  const label = document.createElement('div');
+  label.className = 'bar-label'; label.textContent = 'BAR';
+  barArea.appendChild(label);
+
+  // Flat run, right to left: B1 (right curve), B2-B7 (flat), B8 (left curve)
+  const topRow = document.createElement('div');
+  topRow.className = 'bar-top-row';
+  ['B1','B2','B3','B4','B5','B6','B7','B8'].forEach(s=>topRow.appendChild(buildSeatBtn(s)));
+  barArea.appendChild(topRow);
+
+  // Perpendicular arm, under the left curve (B8): B9-B11
+  const sideRow = document.createElement('div');
+  sideRow.className = 'bar-side-row';
+  ['B9','B10','B11'].forEach(s=>sideRow.appendChild(buildSeatBtn(s)));
+  barArea.appendChild(sideRow);
+
+  bottomRow.appendChild(barArea);
+
+  const poolWrap = document.createElement('div');
+  const poolLabel = document.createElement('div');
+  poolLabel.className = 'bar-label'; poolLabel.textContent = 'TABLE DE POOL';
+  poolWrap.appendChild(poolLabel);
+  const poolBtn = buildSeatBtn('Pool');
+  poolBtn.classList.add('pool-btn');
+  poolWrap.appendChild(poolBtn);
+  bottomRow.appendChild(poolWrap);
+
+  floor.appendChild(bottomRow);
+  seatPickerArea.appendChild(floor);
+}
+
+function showOrderArea(seat){
+  orderArea.style.display = 'block';
+  orderArea.innerHTML = '';
+
+  const order = { bottles: {}, draft: {} };
+  orderBottleItems.forEach(name => order.bottles[name] = 0);
+  futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
+
+  function buildStepperRow(label, price, getQty, setQty){
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    const nameEl = document.createElement('div');
+    nameEl.textContent = `${label} — $${price.toFixed(2)}`;
+    const controls = document.createElement('div');
+    controls.className = 'item-controls';
+    const minusBtn = document.createElement('button');
+    minusBtn.className = 'step-btn'; minusBtn.textContent = '−';
+    const qtyEl = document.createElement('span');
+    qtyEl.className = 'qty'; qtyEl.textContent = getQty();
+    const plusBtn = document.createElement('button');
+    plusBtn.className = 'step-btn'; plusBtn.textContent = '+';
+    minusBtn.addEventListener('click', ()=>{ setQty(Math.max(0, getQty()-1)); qtyEl.textContent = getQty(); updateReceipt(); });
+    plusBtn.addEventListener('click', ()=>{ setQty(getQty()+1); qtyEl.textContent = getQty(); updateReceipt(); });
+    controls.appendChild(minusBtn); controls.appendChild(qtyEl); controls.appendChild(plusBtn);
+    row.appendChild(nameEl); row.appendChild(controls);
+    return row;
+  }
+
+  const bottlesHeading = document.createElement('div');
+  bottlesHeading.className = 'section-heading'; bottlesHeading.textContent = 'Bouteilles';
+  orderArea.appendChild(bottlesHeading);
+  orderBottleItems.forEach(name=>{
+    orderArea.appendChild(buildStepperRow(name, ORDER_BOTTLE_PRICE, ()=>order.bottles[name], (v)=>order.bottles[name]=v));
+  });
+
+  const draftHeading = document.createElement('div');
+  draftHeading.className = 'section-heading'; draftHeading.textContent = 'Fût — Pinte / Pichet';
+  orderArea.appendChild(draftHeading);
+  futTaps.forEach(tap=>{
+    orderArea.appendChild(buildStepperRow(`${tap} — Pinte`, ORDER_PINTE_PRICE, ()=>order.draft[`${tap}_pinte`], (v)=>order.draft[`${tap}_pinte`]=v));
+    orderArea.appendChild(buildStepperRow(`${tap} — Pichet`, ORDER_PICHET_PRICE, ()=>order.draft[`${tap}_pichet`], (v)=>order.draft[`${tap}_pichet`]=v));
+  });
+
+  const receiptEl = document.createElement('div');
+  receiptEl.className = 'receipt';
+  orderArea.appendChild(receiptEl);
+
+  const sendBtn = document.createElement('button');
+  sendBtn.className = 'primary';
+  sendBtn.textContent = 'Envoyer la commande';
+  orderArea.appendChild(sendBtn);
+
+  const statusEl = document.createElement('div');
+  statusEl.className = 'status';
+  orderArea.appendChild(statusEl);
+
+  function computeLines(){
+    const lines = [];
+    orderBottleItems.forEach(name=>{
+      const qty = order.bottles[name];
+      if(qty > 0) lines.push({ name, qty, unit_price: ORDER_BOTTLE_PRICE, line_total: round2(qty*ORDER_BOTTLE_PRICE) });
+    });
+    futTaps.forEach(tap=>{
+      const pinte = order.draft[`${tap}_pinte`];
+      if(pinte > 0) lines.push({ name: `${tap} (Pinte)`, qty: pinte, unit_price: ORDER_PINTE_PRICE, line_total: round2(pinte*ORDER_PINTE_PRICE) });
+      const pichet = order.draft[`${tap}_pichet`];
+      if(pichet > 0) lines.push({ name: `${tap} (Pichet)`, qty: pichet, unit_price: ORDER_PICHET_PRICE, line_total: round2(pichet*ORDER_PICHET_PRICE) });
+    });
+    return lines;
+  }
+
+  function updateReceipt(){
+    const lines = computeLines();
+    const subtotal = round2(lines.reduce((s,l)=>s+l.line_total, 0));
+    const b = taxBreakdown(subtotal);
+    const total = round2(subtotal + b.tps + b.tvq);
+    let html = `<div style="text-align:center; font-weight:bold; margin-bottom:8px;">${seat}</div>`;
+    if(lines.length === 0){
+      html += `<div style="color:var(--ink-soft);">Aucun item sélectionné</div>`;
+    } else {
+      lines.forEach(l=>{
+        html += `<div class="receipt-line"><span>${l.qty} × ${l.name}</span><span>$${l.line_total.toFixed(2)}</span></div>`;
+      });
+    }
+    html += `<div class="receipt-rule"></div>`;
+    html += `<div class="receipt-line"><span>Sous-total</span><span>$${subtotal.toFixed(2)}</span></div>`;
+    html += `<div class="receipt-line"><span>TPS</span><span>$${b.tps.toFixed(2)}</span></div>`;
+    html += `<div class="receipt-line"><span>TVQ</span><span>$${b.tvq.toFixed(2)}</span></div>`;
+    html += `<div class="receipt-line receipt-total"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>`;
+    receiptEl.innerHTML = html;
+    return { lines, subtotal, tps: b.tps, tvq: b.tvq, total };
+  }
+
+  sendBtn.addEventListener('click', async ()=>{
+    const { lines, subtotal, tps, tvq, total } = updateReceipt();
+    if(lines.length === 0){ statusEl.textContent = 'Ajoutez au moins un item.'; return; }
+    sendBtn.disabled = true;
+    try{
+      await sb.from('pre_orders').insert({
+        seat, items: lines, subtotal, tps, tvq, total, status: 'pending'
+      });
+      statusEl.textContent = 'Commande envoyée — en attente de confirmation par le bar ✓';
+      orderBottleItems.forEach(name => order.bottles[name] = 0);
+      futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
+      showOrderArea(seat); // rebuild fresh for the next round
+    }catch(e){
+      statusEl.textContent = 'Erreur — réessayez.';
+      sendBtn.disabled = false;
+    }
+  });
+
+  updateReceipt();
+}
+
+// ---- Boot ----
+const saved = getSavedSeat();
+if(saved){
+  renderSeatConfirm(saved);
+} else {
+  renderSeatPicker();
+}
+</script>
+</body>
+</html>
