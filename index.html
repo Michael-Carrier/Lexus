@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.869</title>
+<title>Registre du bar v 2.871</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -604,7 +604,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.3</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.4</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -699,12 +699,22 @@ const deliveryItems = [
   {name:"Smirnoff"}
 ];
 
+// Order-taking prototype — reuses the same beer catalog as Inventaire/Stock so the
+// menu always matches what's actually tracked. Prices are placeholders until real
+// pricing is provided; this is a visual mockup of the ordering flow, not yet wired
+// to any certified sales-recording system.
+const orderBottleItems = ["Budweiser","Bud Light","Bleu","Labatt 50","Mich. Ultra","Corona 0%","Corona","White Claw","Biere inter","Smirnoff Ice","Red Bull","Rev"];
+const ORDER_BOTTLE_PRICE = 6.50;
+const ORDER_PINTE_PRICE = 8.00;
+const ORDER_PICHET_PRICE = 22.00;
+
 const dayNames = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
 const deliveryDays = ["Lundi","Jeudi"];
 
 const tabs = [
   {id:"bartDay", label:"Bartend. Jour", ready:true},
   {id:"bartNight", label:"Bartend. Soir", ready:true},
+  {id:"commander", label:"Commander", ready:true},
   {id:"inventaire", label:"Inventaire Journalier", ready:true},
   {id:"delivery", label:"Beer Delivery", ready:true, restrictedTo:deliveryDays},
   {id:"misc", label:"Poker", ready:true},
@@ -845,7 +855,7 @@ let state = {
 // (this is intentionally simple, per "we'll worry about protection later").
 const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
-  barmaid: ['bartDay','bartNight'],
+  barmaid: ['bartDay','bartNight','commander'],
   janitor: ['inventaire'],
   boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
 };
@@ -942,6 +952,8 @@ function renderPanel(){
     panel.appendChild(buildDeliveryPanel());
   } else if(tab.id === "bartDay" || tab.id === "bartNight"){
     panel.appendChild(buildShiftPanel(tab.id));
+  } else if(tab.id === "commander"){
+    panel.appendChild(buildOrderPanel());
   } else if(tab.id === "misc"){
     panel.appendChild(buildMiscPanel());
   } else if(tab.id === "sunday"){
@@ -3090,6 +3102,220 @@ function buildInventairePanel(){
     });
   }
 
+  return wrap;
+}
+
+function buildOrderPanel(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <h2>Commander</h2>
+    <div class="sub">Prototype — pas encore un système de caisse certifié. Juste pour visualiser le flux de commande et le reçu.</div>
+  `;
+
+  // Local order state, cleared once the order is completed.
+  const order = { bottles: {}, draft: {}, paymentMethod: '', amountTendered: '' };
+  orderBottleItems.forEach(name => order.bottles[name] = 0);
+  futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
+
+  const layout = document.createElement('div');
+  layout.style.cssText = 'display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;';
+
+  // ---- Left: item selection ----
+  const menuCol = document.createElement('div');
+  menuCol.style.cssText = 'flex:1 1 340px; min-width:300px;';
+
+  const bottlesHeading = document.createElement('div');
+  bottlesHeading.className = 'sub'; bottlesHeading.style.fontWeight = '600';
+  bottlesHeading.textContent = 'Bouteilles';
+  menuCol.appendChild(bottlesHeading);
+
+  function buildStepperRow(label, price, getQty, setQty){
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line);';
+    const nameEl = document.createElement('div');
+    nameEl.textContent = `${label} — $${price.toFixed(2)}`;
+    nameEl.style.cssText = 'font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.88rem;';
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display:flex; align-items:center; gap:8px;';
+    const minusBtn = document.createElement('button');
+    minusBtn.className = 'print-btn'; minusBtn.textContent = '−'; minusBtn.style.padding = '2px 10px';
+    const qtyEl = document.createElement('span');
+    qtyEl.style.cssText = 'min-width:1.5em; text-align:center; font-variant-numeric:tabular-nums;';
+    qtyEl.textContent = getQty();
+    const plusBtn = document.createElement('button');
+    plusBtn.className = 'print-btn'; plusBtn.textContent = '+'; plusBtn.style.padding = '2px 10px';
+    minusBtn.addEventListener('click', ()=>{ setQty(Math.max(0, getQty()-1)); qtyEl.textContent = getQty(); updateReceipt(); });
+    plusBtn.addEventListener('click', ()=>{ setQty(getQty()+1); qtyEl.textContent = getQty(); updateReceipt(); });
+    controls.appendChild(minusBtn); controls.appendChild(qtyEl); controls.appendChild(plusBtn);
+    row.appendChild(nameEl); row.appendChild(controls);
+    return row;
+  }
+
+  orderBottleItems.forEach(name=>{
+    menuCol.appendChild(buildStepperRow(name, ORDER_BOTTLE_PRICE,
+      ()=>order.bottles[name], (v)=>order.bottles[name]=v));
+  });
+
+  const draftHeading = document.createElement('div');
+  draftHeading.className = 'sub'; draftHeading.style.fontWeight = '600'; draftHeading.style.marginTop = '18px';
+  draftHeading.textContent = 'Fût — Pinte / Pichet';
+  menuCol.appendChild(draftHeading);
+
+  futTaps.forEach(tap=>{
+    menuCol.appendChild(buildStepperRow(`${tap} — Pinte`, ORDER_PINTE_PRICE,
+      ()=>order.draft[`${tap}_pinte`], (v)=>order.draft[`${tap}_pinte`]=v));
+    menuCol.appendChild(buildStepperRow(`${tap} — Pichet`, ORDER_PICHET_PRICE,
+      ()=>order.draft[`${tap}_pichet`], (v)=>order.draft[`${tap}_pichet`]=v));
+  });
+
+  // ---- Right: live receipt + payment ----
+  const receiptCol = document.createElement('div');
+  receiptCol.style.cssText = 'flex:0 0 300px; font-family:"Courier New",monospace; font-size:0.85rem; border:1px dashed var(--ink); padding:16px; background:#fff;';
+  layout.appendChild(menuCol); layout.appendChild(receiptCol);
+  wrap.appendChild(layout);
+
+  const paymentBox = document.createElement('div');
+  paymentBox.style.cssText = 'margin-top:16px; font-family:"Avenir Next","Segoe UI",sans-serif;';
+  paymentBox.innerHTML = `<div class="sub" style="font-weight:600;">Paiement</div>`;
+  const methodRow = document.createElement('div');
+  methodRow.className = 'shift-row';
+  ['Cash','Carte','Interac'].forEach(method=>{
+    const field = document.createElement('label');
+    field.style.cssText = 'display:flex; align-items:center; gap:6px; margin-right:16px; font-size:0.88rem;';
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'paymentMethod'; radio.value = method;
+    radio.addEventListener('change', ()=>{ order.paymentMethod = method; renderCashRow(); updateReceipt(); });
+    field.appendChild(radio); field.appendChild(document.createTextNode(method));
+    methodRow.appendChild(field);
+  });
+  paymentBox.appendChild(methodRow);
+
+  const cashRowWrap = document.createElement('div');
+  paymentBox.appendChild(cashRowWrap);
+  function renderCashRow(){
+    cashRowWrap.innerHTML = '';
+    if(order.paymentMethod !== 'Cash') return;
+    const row = document.createElement('div');
+    row.className = 'shift-row';
+    const field = document.createElement('div'); field.className = 'field';
+    field.innerHTML = `<label>Montant reçu</label>`;
+    const input = document.createElement('input');
+    input.type = 'number'; input.className = 'num'; input.value = order.amountTendered;
+    input.addEventListener('input', ()=>{ order.amountTendered = input.value; updateReceipt(); });
+    field.appendChild(input);
+    row.appendChild(field);
+    cashRowWrap.appendChild(row);
+  }
+  wrap.appendChild(paymentBox);
+
+  const completeBtn = document.createElement('button');
+  completeBtn.className = 'primary'; completeBtn.style.marginTop = '14px';
+  completeBtn.textContent = 'Compléter la commande';
+  const completeStatus = document.createElement('span');
+  completeStatus.className = 'status'; completeStatus.style.marginLeft = '10px';
+  wrap.appendChild(completeBtn); wrap.appendChild(completeStatus);
+
+  // ---- History ----
+  const historyHeading = document.createElement('div');
+  historyHeading.className = 'sub'; historyHeading.style.marginTop = '26px'; historyHeading.style.fontWeight = '600';
+  historyHeading.textContent = 'Commandes récentes';
+  wrap.appendChild(historyHeading);
+  const historyList = document.createElement('div');
+  wrap.appendChild(historyList);
+
+  async function loadHistory(){
+    historyList.innerHTML = '<div class="stub">Chargement...</div>';
+    try{
+      const { data, error } = await sb.from('orders').select('*').order('created_at', {ascending:false}).limit(10);
+      if(error) throw error;
+      historyList.innerHTML = '';
+      if(!data || data.length === 0){ historyList.innerHTML = '<div class="stub">Aucune commande pour l\'instant.</div>'; return; }
+      data.forEach(o=>{
+        const el = document.createElement('div');
+        el.style.cssText = 'padding:8px 0; border-bottom:1px solid var(--line); font-family:"Avenir Next","Segoe UI",sans-serif; font-size:0.85rem;';
+        const when = new Date(o.created_at).toLocaleString('fr-CA', {dateStyle:'short', timeStyle:'short'});
+        el.innerHTML = `<strong>$${Number(o.total).toFixed(2)}</strong> — ${o.payment_method || '?'} — ${when}`;
+        historyList.appendChild(el);
+      });
+    }catch(e){ historyList.innerHTML = '<div class="stub">Erreur de chargement.</div>'; }
+  }
+  loadHistory();
+
+  function computeOrderLines(){
+    const lines = [];
+    orderBottleItems.forEach(name=>{
+      const qty = order.bottles[name];
+      if(qty > 0) lines.push({ name, qty, unit_price: ORDER_BOTTLE_PRICE, line_total: round2(qty*ORDER_BOTTLE_PRICE) });
+    });
+    futTaps.forEach(tap=>{
+      const pinte = order.draft[`${tap}_pinte`];
+      if(pinte > 0) lines.push({ name: `${tap} (Pinte)`, qty: pinte, unit_price: ORDER_PINTE_PRICE, line_total: round2(pinte*ORDER_PINTE_PRICE) });
+      const pichet = order.draft[`${tap}_pichet`];
+      if(pichet > 0) lines.push({ name: `${tap} (Pichet)`, qty: pichet, unit_price: ORDER_PICHET_PRICE, line_total: round2(pichet*ORDER_PICHET_PRICE) });
+    });
+    return lines;
+  }
+
+  function updateReceipt(){
+    const lines = computeOrderLines();
+    const subtotal = round2(lines.reduce((s,l)=>s+l.line_total, 0));
+    const b = taxBreakdown(subtotal);
+    const total = round2(subtotal + b.tps + b.tvq);
+
+    let html = `<div style="text-align:center; font-weight:bold; margin-bottom:8px;">REÇU</div>`;
+    if(lines.length === 0){
+      html += `<div style="color:var(--ink-soft);">Aucun item sélectionné</div>`;
+    } else {
+      lines.forEach(l=>{
+        html += `<div style="display:flex; justify-content:space-between;"><span>${l.qty} × ${l.name}</span><span>$${l.line_total.toFixed(2)}</span></div>`;
+      });
+    }
+    html += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div>`;
+    html += `<div style="display:flex; justify-content:space-between;"><span>Sous-total</span><span>$${subtotal.toFixed(2)}</span></div>`;
+    html += `<div style="display:flex; justify-content:space-between;"><span>TPS</span><span>$${b.tps.toFixed(2)}</span></div>`;
+    html += `<div style="display:flex; justify-content:space-between;"><span>TVQ</span><span>$${b.tvq.toFixed(2)}</span></div>`;
+    html += `<div style="display:flex; justify-content:space-between; font-weight:bold; margin-top:6px;"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>`;
+
+    if(order.paymentMethod){
+      html += `<div style="border-top:1px dashed var(--ink); margin:8px 0;"></div>`;
+      html += `<div>Paiement: ${order.paymentMethod}</div>`;
+      if(order.paymentMethod === 'Cash' && order.amountTendered !== ''){
+        const tendered = Number(order.amountTendered)||0;
+        const change = round2(tendered - total);
+        html += `<div style="display:flex; justify-content:space-between;"><span>Reçu</span><span>$${tendered.toFixed(2)}</span></div>`;
+        html += `<div style="display:flex; justify-content:space-between; font-weight:bold;"><span>Monnaie</span><span>$${change.toFixed(2)}</span></div>`;
+      }
+    }
+    receiptCol.innerHTML = html;
+    return { lines, subtotal, tps:b.tps, tvq:b.tvq, total };
+  }
+
+  completeBtn.addEventListener('click', async ()=>{
+    const { lines, subtotal, tps, tvq, total } = updateReceipt();
+    if(lines.length === 0){ completeStatus.textContent = 'Ajoute au moins un item.'; return; }
+    if(!order.paymentMethod){ completeStatus.textContent = 'Choisis un mode de paiement.'; return; }
+    const tendered = order.paymentMethod === 'Cash' ? Number(order.amountTendered)||0 : null;
+    const change = tendered !== null ? round2(tendered - total) : null;
+    completeBtn.disabled = true;
+    try{
+      await sb.from('orders').insert({
+        bartender_name: state.loggedInName || null,
+        items: lines, subtotal, tps, tvq, total,
+        payment_method: order.paymentMethod,
+        amount_tendered: tendered, change_given: change
+      });
+      completeStatus.textContent = 'Commande enregistrée ✓';
+      orderBottleItems.forEach(name => order.bottles[name] = 0);
+      futTaps.forEach(tap => { order.draft[`${tap}_pinte`] = 0; order.draft[`${tap}_pichet`] = 0; });
+      order.paymentMethod = ''; order.amountTendered = '';
+      renderPanel(); // full rebuild — resets steppers, radios, receipt, and refreshes history
+    }catch(e){
+      completeStatus.textContent = 'Erreur — réessaie.';
+    }
+    completeBtn.disabled = false;
+  });
+
+  updateReceipt();
   return wrap;
 }
 
