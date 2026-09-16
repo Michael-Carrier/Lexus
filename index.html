@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.876</title>
+<title>Registre du bar v 2.877</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -608,7 +608,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.8</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.0</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -723,6 +723,7 @@ const tabs = [
   {id:"bartNight", label:"Bartend. Soir", ready:true},
   {id:"commander", label:"Commander", ready:true},
   {id:"bills", label:"Bills", ready:true},
+  {id:"bottles", label:"Bottles", ready:true},
   {id:"inventaire", label:"Inventaire Journalier", ready:true},
   {id:"delivery", label:"Beer Delivery", ready:true, restrictedTo:deliveryDays},
   {id:"misc", label:"Poker", ready:true},
@@ -770,6 +771,20 @@ async function loadFutTapsFromSupabase(){
 }
 async function saveFutTapName(tapIndex, name){
   await sb.from('fut_taps').upsert({ tap_index: tapIndex, name }, {onConflict:'tap_index'});
+}
+
+// Bottles list — same live, boss-editable pattern as Fût taps. Starts empty until
+// either the owner adds bottles through the UI, or the real list gets seeded via SQL.
+let bottlesList = [];
+async function loadBottlesListFromSupabase(){
+  try{
+    const { data, error } = await sb.from('bottles_list').select('*').order('bottle_index', {ascending:true});
+    if(error) throw error;
+    bottlesList = (data||[]).map(r=>r.name);
+  }catch(e){ /* keep empty fallback */ }
+}
+async function saveBottleName(bottleIndex, name){
+  await sb.from('bottles_list').upsert({ bottle_index: bottleIndex, name }, {onConflict:'bottle_index'});
 }
 
 // Which real calendar weeks are "A" vs "B" is not yet confirmed — placeholder anchor below.
@@ -873,9 +888,9 @@ let state = {
 // (this is intentionally simple, per "we'll worry about protection later").
 const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
-  barmaid: ['bartDay','bartNight','commander','bills'],
+  barmaid: ['bartDay','bartNight','commander','bills','bottles'],
   janitor: ['inventaire'],
-  boss: ['bartDay','bartNight','inventaire','delivery','misc','sunday','pdfSheets']
+  boss: ['bartDay','bartNight','bottles','inventaire','delivery','misc','sunday','pdfSheets']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
 
@@ -974,6 +989,8 @@ function renderPanel(){
     panel.appendChild(buildOrderPanel());
   } else if(tab.id === "bills"){
     panel.appendChild(buildBillsPanel());
+  } else if(tab.id === "bottles"){
+    panel.appendChild(buildBottlesPanel());
   } else if(tab.id === "misc"){
     panel.appendChild(buildMiscPanel());
   } else if(tab.id === "sunday"){
@@ -3701,6 +3718,337 @@ function buildBillsPanel(){
   return wrap;
 }
 
+function buildBottlesPanel(){
+  return state.role === 'boss' ? buildBottlesOwnerPanel() : buildBottlesBarmaidPanel();
+}
+
+function buildBottlesBarmaidPanel(){
+  const bucket = ensureBucket();
+  if(!bucket.bottles) bucket.bottles = { items: {}, signature: null, signedBy: null };
+  const store = bucket.bottles;
+  if(!store.items) store.items = {};
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <h2>Bottles</h2>
+    <div class="sub">${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}. Vendu = bouteille complète vendue. Réappro = bouteille prise en arrière pour remplacer celle du bar.</div>
+  `;
+
+  const table = document.createElement('table');
+  table.className = 'form-table';
+  table.innerHTML = `<thead><tr><th>Bouteille</th><th>Vendu</th><th>Réappro (de l'arrière)</th></tr></thead>`;
+  const tbody = document.createElement('tbody');
+
+  bottlesList.forEach((bottleName, idx)=>{
+    const key = `bottle${idx}`;
+    if(!store.items[key]) store.items[key] = { sold:"", replenished:"" };
+    const rowStore = store.items[key];
+
+    const tr = document.createElement('tr');
+    const tdName = document.createElement('td');
+    tdName.textContent = bottleName;
+
+    const tdSold = document.createElement('td');
+    const inSold = document.createElement('input');
+    inSold.type='number'; inSold.step='1'; inSold.className='num num-narrow'; inSold.value = rowStore.sold;
+    inSold.addEventListener('input', ()=>{ rowStore.sold = inSold.value; });
+    enforceWholeNumber(inSold);
+
+    const tdRepl = document.createElement('td');
+    const inRepl = document.createElement('input');
+    inRepl.type='number'; inRepl.step='1'; inRepl.className='num num-narrow'; inRepl.value = rowStore.replenished;
+    inRepl.addEventListener('input', ()=>{ rowStore.replenished = inRepl.value; });
+    enforceWholeNumber(inRepl);
+
+    tdSold.appendChild(inSold); tdRepl.appendChild(inRepl);
+    tr.appendChild(tdName); tr.appendChild(tdSold); tr.appendChild(tdRepl);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  if(bottlesList.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'stub'; empty.style.marginTop = '10px';
+    empty.textContent = "Aucune bouteille dans la liste pour l'instant.";
+    wrap.appendChild(empty);
+  }
+
+  // ---- Signature — works with a finger on a tablet or a mouse on desktop ----
+  const sigHeading = document.createElement('div');
+  sigHeading.className = 'sub'; sigHeading.style.fontWeight = '600'; sigHeading.style.marginTop = '24px';
+  sigHeading.textContent = 'Initiales';
+  wrap.appendChild(sigHeading);
+
+  const sigCanvas = document.createElement('canvas');
+  sigCanvas.width = 300; sigCanvas.height = 100;
+  sigCanvas.style.cssText = 'border:1px solid var(--ink); background:#fff; touch-action:none; display:block; margin-top:6px;';
+  wrap.appendChild(sigCanvas);
+
+  const ctx = sigCanvas.getContext('2d');
+  ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#2B2622';
+  let drawing = false, hasSignature = false;
+
+  function posFromEvent(e){
+    const rect = sigCanvas.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+  }
+  function startDraw(e){ drawing = true; hasSignature = true; const p = posFromEvent(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }
+  function moveDraw(e){ if(!drawing) return; const p = posFromEvent(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); }
+  function endDraw(){ drawing = false; if(hasSignature) store.signature = sigCanvas.toDataURL('image/png'); }
+
+  sigCanvas.addEventListener('mousedown', startDraw);
+  sigCanvas.addEventListener('mousemove', moveDraw);
+  window.addEventListener('mouseup', endDraw);
+  sigCanvas.addEventListener('touchstart', startDraw);
+  sigCanvas.addEventListener('touchmove', moveDraw);
+  sigCanvas.addEventListener('touchend', endDraw);
+
+  // Restore a signature already saved for this exact day, if any.
+  if(store.signature){
+    const img = new Image();
+    img.onload = ()=>{ ctx.drawImage(img, 0, 0); hasSignature = true; };
+    img.src = store.signature;
+  }
+
+  const sigBtnRow = document.createElement('div');
+  sigBtnRow.className = 'no-print'; sigBtnRow.style.marginTop = '8px';
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'print-btn';
+  clearBtn.textContent = 'Effacer';
+  clearBtn.addEventListener('click', ()=>{
+    ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+    hasSignature = false;
+    store.signature = null;
+  });
+  sigBtnRow.appendChild(clearBtn);
+  wrap.appendChild(sigBtnRow);
+
+  const initialsField = document.createElement('div');
+  initialsField.className = 'field'; initialsField.style.marginTop = '10px'; initialsField.style.maxWidth = '200px';
+  initialsField.innerHTML = `<label>Nom (optionnel)</label>`;
+  const initialsInput = document.createElement('input');
+  initialsInput.type = 'text'; initialsInput.value = store.signedBy || '';
+  initialsInput.addEventListener('input', ()=>{ store.signedBy = initialsInput.value; });
+  initialsField.appendChild(initialsInput);
+  wrap.appendChild(initialsField);
+
+  wrap.appendChild(buildBottomBar());
+  return wrap;
+}
+
+// Caches for the owner's Bottles view — both are cross-week, so they use a simple
+// "loaded" flag rather than a per-day cache key, and get explicitly invalidated
+// after any save that would change these numbers.
+let bottlesAllHistoryCache = { loaded: false, rows: [] };
+let bottlesOwnerStateCache = { loaded: false, map: {} };
+
+async function fetchAllBottlesDailyHistory(){
+  try{
+    const { data, error } = await sb.from('bottles_daily').select('week_key, day, items, signature, signed_by');
+    if(error) throw error;
+    return data || [];
+  }catch(e){ return []; }
+}
+async function fetchBottlesOwnerStateAll(){
+  try{
+    const { data, error } = await sb.from('bottles_owner_state').select('*');
+    if(error) throw error;
+    const map = {};
+    (data||[]).forEach(r=>{ map[r.bottle_index] = { starting: Number(r.starting_count)||0, totalAdded: Number(r.total_added)||0 }; });
+    return map;
+  }catch(e){ return {}; }
+}
+async function saveBottleOwnerState(bottleIndex, startingCount, totalAdded){
+  await sb.from('bottles_owner_state').upsert({ bottle_index: bottleIndex, starting_count: startingCount, total_added: totalAdded }, {onConflict:'bottle_index'});
+}
+
+function buildBottlesOwnerPanel(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <h2>Bottles — suivi du proprio</h2>
+    <div class="sub">Départ = compte de départ (éditable). Retiré = tout ce que les bartenders ont marqué comme vendu, depuis toujours. Ajouté = ce que tu ajoutes maintenant. Actuel = Départ − Retiré + Ajouté.</div>
+  `;
+
+  if(!bottlesAllHistoryCache.loaded || !bottlesOwnerStateCache.loaded){
+    const loading = document.createElement('div');
+    loading.className = 'stub';
+    loading.textContent = 'Chargement...';
+    wrap.appendChild(loading);
+    Promise.all([fetchAllBottlesDailyHistory(), fetchBottlesOwnerStateAll()]).then(([rows, map])=>{
+      bottlesAllHistoryCache = { loaded: true, rows };
+      bottlesOwnerStateCache = { loaded: true, map };
+      if(state.tab === 'bottles') renderPanel();
+    });
+    return wrap;
+  }
+
+  // Sum every day's "sold" for a given bottle, across all weeks ever recorded,
+  // and keep a per-day breakdown (with signature, if any) for traceability.
+  function soldHistoryFor(idx){
+    const key = `bottle${idx}`;
+    const entries = [];
+    let total = 0;
+    bottlesAllHistoryCache.rows.forEach(row=>{
+      const sold = Number(row.items?.[key]?.sold) || 0;
+      if(sold > 0){
+        total += sold;
+        entries.push({ weekKey: row.week_key, day: row.day, sold, signature: row.signature, signedBy: row.signed_by });
+      }
+    });
+    return { total: round2(total), entries };
+  }
+
+  const table = document.createElement('table');
+  table.className = 'form-table';
+  table.innerHTML = `<thead><tr><th>Bouteille</th><th>Départ</th><th>Retiré</th><th>Ajouté (cette fois)</th><th>Actuel</th></tr></thead>`;
+  const tbody = document.createElement('tbody');
+
+  bottlesList.forEach((bottleName, idx)=>{
+    const ownerState = bottlesOwnerStateCache.map[idx] || { starting: 0, totalAdded: 0 };
+    const { total: removedTotal, entries } = soldHistoryFor(idx);
+
+    const tr = document.createElement('tr');
+
+    const tdName = document.createElement('td');
+    const nameWrap = document.createElement('div');
+    nameWrap.style.cssText = 'display:flex; align-items:center; gap:8px;';
+    const nameLabel = document.createElement('span');
+    nameLabel.textContent = bottleName;
+    const editCheck = document.createElement('input');
+    editCheck.type = 'checkbox';
+    const editInput = document.createElement('input');
+    editInput.type = 'text'; editInput.value = bottleName;
+    editInput.style.display = 'none';
+    editCheck.addEventListener('change', async ()=>{
+      if(editCheck.checked){
+        nameLabel.style.display = 'none';
+        editInput.style.display = 'inline-block';
+      } else {
+        const newName = editInput.value.trim();
+        if(newName && newName !== bottleName){
+          bottlesList[idx] = newName;
+          await saveBottleName(idx, newName);
+          renderPanel();
+          return;
+        }
+        nameLabel.style.display = 'inline';
+        editInput.style.display = 'none';
+      }
+    });
+    nameWrap.appendChild(editCheck); nameWrap.appendChild(nameLabel); nameWrap.appendChild(editInput);
+    tdName.appendChild(nameWrap);
+
+    const tdStart = document.createElement('td');
+    const startInput = document.createElement('input');
+    startInput.type = 'number'; startInput.step = '1'; startInput.className = 'num num-narrow';
+    startInput.value = ownerState.starting;
+    enforceWholeNumber(startInput);
+
+    const tdRemoved = document.createElement('td');
+    tdRemoved.className = 'preview-cell';
+    tdRemoved.textContent = removedTotal;
+    if(entries.length){
+      const viewBtn = document.createElement('button');
+      viewBtn.className = 'link-btn no-print'; viewBtn.style.cssText = 'display:block; font-size:0.75rem; background:none; border:none; color:var(--copper); text-decoration:underline; cursor:pointer; padding:2px 0;';
+      viewBtn.textContent = 'voir détail';
+      const detailBox = document.createElement('div');
+      detailBox.style.cssText = 'display:none; text-align:left; font-size:0.78rem; margin-top:4px; max-width:220px;';
+      entries.sort((a,b)=> (a.weekKey+a.day) < (b.weekKey+b.day) ? 1 : -1).forEach(en=>{
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; border-bottom:1px solid var(--line);';
+        line.innerHTML = `<span>${en.day} (${en.weekKey}) — ${en.sold}</span>`;
+        if(en.signature){
+          const img = document.createElement('img');
+          img.src = en.signature; img.style.cssText = 'height:20px; border:1px solid var(--line); background:#fff;';
+          img.title = en.signedBy || '';
+          line.appendChild(img);
+        }
+        detailBox.appendChild(line);
+      });
+      viewBtn.addEventListener('click', ()=>{ detailBox.style.display = detailBox.style.display === 'none' ? 'block' : 'none'; });
+      tdRemoved.appendChild(viewBtn); tdRemoved.appendChild(detailBox);
+    }
+
+    const tdAdd = document.createElement('td');
+    const addInput = document.createElement('input');
+    addInput.type = 'number'; addInput.step = '1'; addInput.className = 'num num-narrow';
+    addInput.value = '';
+    addInput.placeholder = '0';
+    enforceWholeNumber(addInput);
+
+    const tdCurrent = document.createElement('td');
+    tdCurrent.className = 'preview-cell';
+    function refreshCurrent(){
+      const pendingAdd = Number(addInput.value) || 0;
+      const current = roundInt(Number(startInput.value||0) - removedTotal + ownerState.totalAdded + pendingAdd);
+      tdCurrent.textContent = current;
+    }
+    startInput.addEventListener('input', refreshCurrent);
+    addInput.addEventListener('input', refreshCurrent);
+    refreshCurrent();
+
+    tdStart.appendChild(startInput); tdAdd.appendChild(addInput);
+    tr.appendChild(tdName); tr.appendChild(tdStart); tr.appendChild(tdRemoved); tr.appendChild(tdAdd); tr.appendChild(tdCurrent);
+    tr._bottleIdx = idx; tr._startInput = startInput; tr._addInput = addInput; tr._ownerState = ownerState;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  if(bottlesList.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'stub'; empty.style.marginTop = '10px';
+    empty.textContent = "Aucune bouteille dans la liste pour l'instant.";
+    wrap.appendChild(empty);
+  }
+
+  const addTapBtn = document.createElement('button');
+  addTapBtn.className = 'print-btn no-print'; addTapBtn.style.marginTop = '10px';
+  addTapBtn.textContent = '+ Ajouter une bouteille';
+  addTapBtn.addEventListener('click', async ()=>{
+    const name = prompt('Nom de la nouvelle bouteille :');
+    if(!name || !name.trim()) return;
+    const newIndex = bottlesList.length;
+    bottlesList.push(name.trim());
+    await saveBottleName(newIndex, name.trim());
+    renderPanel();
+  });
+  wrap.appendChild(addTapBtn);
+
+  const bar = document.createElement('div');
+  bar.className = 'bottom-bar no-print';
+  const status = document.createElement('div');
+  status.className = 'status'; status.textContent = 'Pas encore enregistré.';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary'; saveBtn.textContent = 'Enregistrer';
+  saveBtn.addEventListener('click', async ()=>{
+    saveBtn.disabled = true;
+    try{
+      const rows = Array.from(tbody.querySelectorAll('tr')).filter(tr=>tr._bottleIdx !== undefined);
+      await Promise.all(rows.map(tr=>{
+        const newStarting = Number(tr._startInput.value)||0;
+        const addedNow = Number(tr._addInput.value)||0;
+        const newTotalAdded = round2(tr._ownerState.totalAdded + addedNow);
+        return saveBottleOwnerState(tr._bottleIdx, newStarting, newTotalAdded);
+      }));
+      bottlesOwnerStateCache.loaded = false; // force a fresh fetch next render
+      status.textContent = `Enregistré — ${new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})}`;
+      showSaveToast('✓ Enregistré', false);
+      renderPanel();
+    }catch(e){
+      status.textContent = "Erreur d'enregistrement.";
+      showSaveToast('⚠ Erreur d\'enregistrement', true);
+    }
+    saveBtn.disabled = false;
+  });
+  bar.appendChild(status); bar.appendChild(saveBtn);
+  wrap.appendChild(bar);
+
+  return wrap;
+}
+
 function buildDeliveryPanel(){
   const bucket = ensureBucket();
   if(!bucket.delivery) bucket.delivery = {};
@@ -3894,12 +4242,13 @@ function weekSettingsRowToStore(row){
 
 async function loadWeekFromSupabase(weekKey){
   try{
-    const [shiftsRes, pokerRes, invRes, delRes, settingsRes] = await Promise.all([
+    const [shiftsRes, pokerRes, invRes, delRes, settingsRes, bottlesRes] = await Promise.all([
       sb.from('shifts').select('*').eq('week_key', weekKey),
       sb.from('poker_daily').select('*').eq('week_key', weekKey),
       sb.from('inventaire_daily').select('*').eq('week_key', weekKey),
       sb.from('delivery_daily').select('*').eq('week_key', weekKey),
-      sb.from('week_settings').select('*').eq('week_key', weekKey).maybeSingle()
+      sb.from('week_settings').select('*').eq('week_key', weekKey).maybeSingle(),
+      sb.from('bottles_daily').select('*').eq('week_key', weekKey)
     ]);
     if(shiftsRes.error) throw shiftsRes.error;
 
@@ -3910,6 +4259,7 @@ async function loadWeekFromSupabase(weekKey){
     (pokerRes.data||[]).forEach(row=>{ data[weekKey][row.day].misc = pokerRowToStore(row); });
     (invRes.data||[]).forEach(row=>{ data[weekKey][row.day].inventaire = row.items || {}; });
     (delRes.data||[]).forEach(row=>{ data[weekKey][row.day].delivery = row.items || {}; });
+    (bottlesRes.data||[]).forEach(row=>{ data[weekKey][row.day].bottles = { items: row.items || {}, signature: row.signature || null, signedBy: row.signed_by || null }; });
     data[weekKey].sunday = settingsRes.data ? weekSettingsRowToStore(settingsRes.data) : {};
 
     setConnected('Connecté à Supabase.');
@@ -3921,7 +4271,7 @@ async function loadWeekFromSupabase(weekKey){
 async function syncWeekToSupabase(weekKey){
   const weekData = data[weekKey];
   if(!weekData) return;
-  const shiftRows = [], pokerRows = [], invRows = [], delRows = [];
+  const shiftRows = [], pokerRows = [], invRows = [], delRows = [], bottlesRows = [];
   dayNames.forEach(d=>{
     const bucket = weekData[d];
     if(!bucket) return;
@@ -3936,6 +4286,7 @@ async function syncWeekToSupabase(weekKey){
     }))(bucket.misc) });
     if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
     if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
+    if(bucket.bottles) bottlesRows.push({ week_key: weekKey, day: d, items: bucket.bottles.items || {}, signature: bucket.bottles.signature || null, signed_by: bucket.bottles.signedBy || null });
   });
 
   const ops = [];
@@ -3943,6 +4294,7 @@ async function syncWeekToSupabase(weekKey){
   if(pokerRows.length) ops.push(sb.from('poker_daily').upsert(pokerRows, {onConflict:'week_key,day'}));
   if(invRows.length) ops.push(sb.from('inventaire_daily').upsert(invRows, {onConflict:'week_key,day'}));
   if(delRows.length) ops.push(sb.from('delivery_daily').upsert(delRows, {onConflict:'week_key,day'}));
+  if(bottlesRows.length) ops.push(sb.from('bottles_daily').upsert(bottlesRows, {onConflict:'week_key,day'}));
   if(weekData.sunday) ops.push(sb.from('week_settings').upsert(storeToWeekSettingsRow(weekKey, weekData.sunday), {onConflict:'week_key'}));
 
   const results = await Promise.all(ops);
@@ -4017,6 +4369,7 @@ async function findPendingReviewsLive(){
 loadPinsFromSupabase();
 loadScheduleFromSupabase();
 loadFutTapsFromSupabase();
+loadBottlesListFromSupabase();
 try{
   const savedTheme = localStorage.getItem('barTheme');
   if(savedTheme) applyTheme(savedTheme);
