@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.874</title>
+<title>Registre du bar v 2.876</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -193,6 +193,10 @@
   }
   .num-narrow{
     width:3.2em !important;
+    text-align:center;
+  }
+  .num-narrow-neg{
+    width:4.2em !important;
     text-align:center;
   }
   .warn-cell{
@@ -604,7 +608,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.7</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v4.8</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1967,13 +1971,13 @@ function buildPokerSheet(){
   g1Box.appendChild(g1Row);
   wrap.appendChild(g1Box);
 
-  // Pull the known values first. Net prefers the manually-corrected value if the boss
-  // overrode it on the Poker tab — otherwise falls back to Inséré − Coupons/Win.
+  // Pull the known values first. Net is the owner's own independently-tracked number,
+  // never derived from Inséré − Coupons/Win.
   const dayData = dayNames.map(d=>{
     const b = bucketFor(state.week, d);
     const win = Number(b.misc?.coupons)||0;
     const inserted = Number(b.misc?.total)||0;
-    const net = b.misc?.netManual ? (Number(b.misc.net)||0) : round2(inserted - win);
+    const net = Number(b.misc?.net)||0;
     return { day:d, win, inserted, net };
   });
   const wk = computeWeekPokerFull(state.week);
@@ -2282,7 +2286,6 @@ function buildMiscPanel(){
     if(dStore.coupons === undefined) dStore.coupons = "";
     if(dStore.total === undefined) dStore.total = "";
     if(dStore.net === undefined) dStore.net = "";
-    if(dStore.netManual === undefined) dStore.netManual = false;
 
     const isActive = d === state.day;
     const tr = document.createElement('tr');
@@ -2295,26 +2298,21 @@ function buildMiscPanel(){
     const inCoupons = document.createElement('input');
     inCoupons.type='number'; inCoupons.className='num'; inCoupons.value = dStore.coupons;
     inCoupons.disabled = !isActive;
+    inCoupons.addEventListener('input', ()=>{ dStore.coupons = inCoupons.value; });
 
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num'; inTotal.value = dStore.total;
     inTotal.disabled = !isActive;
+    inTotal.addEventListener('input', ()=>{ dStore.total = inTotal.value; });
 
+    // Net is its own independent number the owner tracks manually — never derived
+    // from Total inséré − Coupons/Win, on purpose (confirmed this doesn't reflect reality).
     const tdNet = document.createElement('td');
     const inNet = document.createElement('input');
     inNet.type='number'; inNet.className='num'; inNet.value = dStore.net;
     inNet.disabled = !isActive;
-
-    function recalcNet(){
-      if(dStore.netManual) return; // a manual correction sticks until cleared
-      dStore.net = round2((Number(dStore.total)||0) - (Number(dStore.coupons)||0));
-      inNet.value = dStore.net;
-    }
-    inCoupons.addEventListener('input', ()=>{ dStore.coupons = inCoupons.value; recalcNet(); });
-    inTotal.addEventListener('input', ()=>{ dStore.total = inTotal.value; recalcNet(); });
-    inNet.addEventListener('input', ()=>{ dStore.net = inNet.value; dStore.netManual = true; });
-    recalcNet(); // keep in sync even before any edit this session
+    inNet.addEventListener('input', ()=>{ dStore.net = inNet.value; });
 
     tdCoupons.appendChild(inCoupons); tdTotal.appendChild(inTotal); tdNet.appendChild(inNet);
     tr.appendChild(tdDay); tr.appendChild(tdCoupons); tr.appendChild(tdTotal); tr.appendChild(tdNet);
@@ -3019,7 +3017,7 @@ function buildInventairePanel(){
     // the other side calculates itself. Both stay directly editable.
     const tdEcart = document.createElement('td');
     const inEcart = document.createElement('input');
-    inEcart.type='number'; inEcart.step='1'; inEcart.className='num num-narrow'; inEcart.value = store[key].ecart;
+    inEcart.type='number'; inEcart.step='1'; inEcart.className='num num-narrow-neg'; inEcart.value = store[key].ecart;
     ecartInputs[key] = inEcart;
 
     const tdTotal = document.createElement('td');
@@ -3850,7 +3848,7 @@ function pokerRowToStore(row){
   return {
     coupons: row.coupons ?? "", argent: row.argent ?? "",
     total: row.total ?? "", machine: row.machine ?? "", guichet: row.guichet ?? "",
-    net: row.net ?? "", netManual: row.net_manual || false
+    net: row.net ?? ""
   };
 }
 function storeToWeekSettingsRow(weekKey, sun){
@@ -3930,11 +3928,11 @@ async function syncWeekToSupabase(weekKey){
     ['bartDay','bartNight'].forEach(st=>{
       if(bucket[st]) shiftRows.push(storeToShiftRow(weekKey, d, st, bucket[st]));
     });
-    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net,netManual})=>({
+    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net})=>({
       coupons: coupons===""?null:Number(coupons), argent: argent===""?null:Number(argent),
       total: total===""?null:Number(total), machine: machine===""?null:Number(machine),
       guichet: guichet===""?null:Number(guichet),
-      net: net===""?null:Number(net), net_manual: !!netManual
+      net: net===""?null:Number(net)
     }))(bucket.misc) });
     if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
     if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
@@ -3952,14 +3950,43 @@ async function syncWeekToSupabase(weekKey){
   if(failed) throw failed.error;
 }
 
+// Big, hard-to-miss confirmation, in addition to the small status text — easy to
+// glance-catch even in a busy, loud, or half-attentive moment at the bar.
+function showSaveToast(message, isError){
+  let toast = document.getElementById('saveToast');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'saveToast';
+    toast.style.cssText = `
+      position:fixed; top:20px; left:50%; transform:translateX(-50%) translateY(-20px);
+      z-index:9999; padding:16px 28px; font-family:"Avenir Next","Segoe UI",sans-serif;
+      font-size:1.05rem; font-weight:700; border-radius:4px; box-shadow:0 4px 16px rgba(0,0,0,0.25);
+      opacity:0; transition:opacity 0.2s, transform 0.2s; pointer-events:none;
+    `;
+    document.body.appendChild(toast);
+  }
+  toast.style.background = isError ? '#B0402A' : '#4F7A3B';
+  toast.style.color = '#fff';
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  toast.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(()=>{
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(-20px)';
+  }, 2200);
+}
+
 async function saveData(statusEl){
   const now = new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'});
   try{
     await syncWeekToSupabase(state.week);
     statusEl.textContent = `Enregistré — ${now}`;
     setConnected('Connecté à Supabase.');
+    showSaveToast(`✓ Enregistré — ${now}`, false);
   }catch(e){
     statusEl.textContent = `Erreur d'enregistrement — ${e.message||e}`;
+    showSaveToast(`⚠ Erreur d'enregistrement`, true);
   }
 }
 
