@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.877</title>
+<title>Registre du bar v 2.878</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -608,7 +608,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.0</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.3</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -781,6 +781,11 @@ async function loadBottlesListFromSupabase(){
     const { data, error } = await sb.from('bottles_list').select('*').order('bottle_index', {ascending:true});
     if(error) throw error;
     bottlesList = (data||[]).map(r=>r.name);
+    // If the user is already sitting on the Bottles tab when this resolves (e.g. they
+    // navigated there right after login, before this background fetch finished),
+    // re-render so the list actually shows up instead of staying empty until they
+    // switch tabs and back.
+    if(state.tab === 'bottles') renderPanel();
   }catch(e){ /* keep empty fallback */ }
 }
 async function saveBottleName(bottleIndex, name){
@@ -2680,20 +2685,66 @@ function buildStockSection(shiftType, bucket){
     return numOrZero(bucket.inventaire?.[key]?.total);
   }
 
+  // Quiet by default — the previous/next-shift preview only actually shows a number
+  // when it disagrees with this row's own value. When everything lines up, both
+  // stay blank, which is what keeps the page from feeling cluttered.
   function refreshRow(key){
     const rowStore = rowStores[key];
     const leftVal = computeLeftValue(key);
     if(leftCellEls[key]){
-      if(leftVal === undefined){ leftCellEls[key].textContent = '...'; leftCellEls[key].classList.remove('mismatch-cell'); }
+      if(leftVal === undefined){ leftCellEls[key].textContent = '...'; leftCellEls[key].classList.remove('mismatch-cell'); leftCellEls[key].onclick = null; leftCellEls[key].style.cursor = ''; }
       else {
-        leftCellEls[key].textContent = leftVal;
         const debutVal = numOrZero(rowStore.debut);
         const mismatch = debutVal !== leftVal;
+        leftCellEls[key].textContent = mismatch ? leftVal : '';
         leftCellEls[key].classList.toggle('mismatch-cell', mismatch);
         debutInputs[key].classList.toggle('mismatch-cell', mismatch);
+        if(mismatch){
+          const diff = roundInt(debutVal - leftVal);
+          const sign = diff > 0 ? '+' : '';
+          const message = isDay
+            ? `Hier Inventaire ≠ Début (${bucket.bartDay?.bartender || 'Jour'}) — ${sign}${diff} bouteilles`
+            : `Jour Fin (${bucket.bartDay?.bartender || 'Jour'}) ≠ Nuit Début (${bucket.bartNight?.bartender || 'Nuit'}) — ${sign}${diff} bouteilles`;
+          leftCellEls[key].title = message;
+          leftCellEls[key].style.cursor = 'pointer';
+          leftCellEls[key].onclick = ()=> alert(message);
+        } else {
+          leftCellEls[key].title = ''; leftCellEls[key].onclick = null; leftCellEls[key].style.cursor = '';
+        }
       }
     }
-    if(rightCellEls[key]) rightCellEls[key].textContent = computeRightValue(key);
+    if(rightCellEls[key]){
+      const rightVal = computeRightValue(key);
+      let mismatch = false, message = '';
+      if(isDay){
+        // Day's own Fin vs Night's Début, from Day's side.
+        const nightDebutEntered = bucket.bartNight?.stock?.[key]?.debut !== undefined && bucket.bartNight?.stock?.[key]?.debut !== "";
+        mismatch = nightDebutEntered && numOrZero(rowStore.fin) !== rightVal;
+        if(mismatch){
+          const diff = roundInt(numOrZero(rowStore.fin) - rightVal);
+          message = `Jour Fin (${bucket.bartDay?.bartender || 'Jour'}) ≠ Nuit Début (${bucket.bartNight?.bartender || 'Nuit'}) — ${diff>0?'+':''}${diff} bouteilles`;
+        }
+      } else {
+        // Night's own Fin + Janitor's Ajouté vs Inventaire's Total, from Night's side.
+        const invTotalEntered = bucket.inventaire?.[key]?.total !== undefined && bucket.inventaire?.[key]?.total !== "";
+        const added = Number(bucket.inventaire?.[key]?.added) || 0;
+        const expected = round2(numOrZero(rowStore.fin) + added);
+        mismatch = invTotalEntered && expected !== rightVal;
+        if(mismatch){
+          const diff = roundInt(expected - rightVal);
+          message = `Nuit Fin + Ajouté (${bucket.bartNight?.bartender || 'Nuit'}) ≠ Nouveau Total — ${diff>0?'+':''}${diff} bouteilles`;
+        }
+      }
+      rightCellEls[key].textContent = mismatch ? rightVal : '';
+      rightCellEls[key].classList.toggle('mismatch-cell', mismatch);
+      if(mismatch){
+        rightCellEls[key].title = message;
+        rightCellEls[key].style.cursor = 'pointer';
+        rightCellEls[key].onclick = ()=> alert(message);
+      } else {
+        rightCellEls[key].title = ''; rightCellEls[key].onclick = null; rightCellEls[key].style.cursor = '';
+      }
+    }
   }
 
   // Three separate tables, side by side — left preview / main form / right preview.
@@ -3014,14 +3065,12 @@ function buildInventairePanel(){
 
     const tdLeft = document.createElement('td');
     tdLeft.className = 'preview-cell';
-    const nightFin = bucket.bartNight?.stock?.[key]?.fin;
-    tdLeft.textContent = (nightFin !== undefined && nightFin !== "") ? nightFin : '—';
+    tdLeft.textContent = ''; // checkCloseOut() sets this — blank unless there's an actual mismatch
     leftCells[key] = tdLeft;
 
     const tdAdded = document.createElement('td');
     const inAdded = document.createElement('input');
     inAdded.type='number'; inAdded.step='1'; inAdded.className='num num-narrow'; inAdded.value = store[key].added;
-    inAdded.addEventListener('input', ()=>{ store[key].added = inAdded.value; recalcSold(key); checkCloseOut(key); });
     enforceWholeNumber(inAdded); clampThreeDigits(inAdded, false);
     tdAdded.appendChild(inAdded);
 
@@ -3043,6 +3092,19 @@ function buildInventairePanel(){
     totalInputs[key] = totalDisplay;
 
     const attendu = Number(item.expected) || 0;
+    // Once Ajouté changes, auto-suggest both Écart and Nouveau Total from
+    // Nuit Fin + Ajouté — still fully editable afterward via their own inputs.
+    inAdded.addEventListener('input', ()=>{
+      store[key].added = inAdded.value;
+      const nightFin = Number(bucket.bartNight?.stock?.[key]?.fin) || 0;
+      const added = Number(inAdded.value) || 0;
+      const suggested = roundInt(nightFin + added);
+      store[key].total = suggested;
+      totalDisplay.value = suggested;
+      store[key].ecart = roundInt(suggested - attendu);
+      inEcart.value = store[key].ecart;
+      recalcSold(key); checkCloseOut(key);
+    });
     inEcart.addEventListener('input', ()=>{
       store[key].ecart = inEcart.value;
       store[key].total = inEcart.value === "" ? "" : roundInt(attendu + Number(inEcart.value));
@@ -3092,6 +3154,10 @@ function buildInventairePanel(){
   // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
   // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
   // to whichever bartender shift's numbers look inconsistent, not to Inventaire itself.
+  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
+  // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
+  // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
+  // to whichever bartender shift's numbers look inconsistent, not to Inventaire itself.
   function checkCloseOut(key){
     const dayFin = bucket.bartDay?.stock?.[key]?.fin;
     const nightDebut = bucket.bartNight?.stock?.[key]?.debut;
@@ -3100,33 +3166,48 @@ function buildInventairePanel(){
     const expected = round2(nightFin + added);
     const actual = round2(Number(store[key].total) || 0);
     const mismatch = actual !== expected;
+    leftCells[key].textContent = mismatch ? nightFin : ''; // quiet unless something's actually off
     leftCells[key].classList.toggle('mismatch-cell', mismatch);
     totalInputs[key].classList.toggle('mismatch-cell', mismatch);
 
     if(!mismatch || store[key].total === ""){
       warnCells[key].textContent = '';
       warnCells[key].title = '';
+      warnCells[key].onclick = null;
+      warnCells[key].style.cursor = '';
       return;
     }
-    const diff = Math.abs(roundInt(actual - expected));
+    const diff = roundInt(actual - expected);
+    const dayName = bucket.bartDay?.bartender || 'Jour';
+    const nightName = bucket.bartNight?.bartender || 'Nuit';
     // If Day's Fin doesn't even match Night's own Début, the discrepancy likely started
     // earlier in the day shift rather than with Night's own count.
     const dayNightBroken = dayFin !== undefined && dayFin !== "" && nightDebut !== undefined && nightDebut !== "" && Number(dayFin) !== Number(nightDebut);
-    const culprit = dayNightBroken ? 'jour' : 'nuit';
-    warnCells[key].textContent = `⚠ ${diff}`;
-    warnCells[key].title = `${diff} bouteille${diff>1?'s':''} ne concorde${diff>1?'nt':''} pas — l'écart semble provenir du quart de ${culprit}.`;
+    const sign = diff > 0 ? '+' : '';
+    const message = dayNightBroken
+      ? `Jour Fin (${dayName}) ≠ Nuit Début (${nightName}) — ${sign}${diff} bouteilles`
+      : `Nuit Fin + Ajouté (${nightName}) ≠ Nouveau Total — ${sign}${diff} bouteilles`;
+    warnCells[key].textContent = `⚠ ${Math.abs(diff)}`;
+    warnCells[key].title = message;
+    warnCells[key].style.cursor = 'pointer';
+    warnCells[key].onclick = ()=> alert(message);
   }
   Object.keys(leftCells).forEach(checkCloseOut);
 
   // Right preview: tomorrow's Day shift Début — Boss only (see canSeeNext above).
+  // Quiet unless it disagrees with what THIS row's own Nouveau Total would predict.
   const nextRef = nextDayRef(state.week, state.day);
   if(canSeeNext){
     Object.keys(rightCells).forEach(key=>{
       if(nextRef.sameWeek){
         const d = bucketFor(state.week, nextRef.day).bartDay?.stock?.[key]?.debut;
-        rightCells[key].textContent = (d !== undefined && d !== "") ? d : '—';
+        const entered = d !== undefined && d !== "";
+        const myTotal = numOrZero(store[key].total);
+        const mismatch = entered && Number(d) !== myTotal;
+        rightCells[key].textContent = mismatch ? d : '';
+        rightCells[key].classList.toggle('mismatch-cell', mismatch);
       } else {
-        rightCells[key].textContent = '—';
+        rightCells[key].textContent = '';
       }
     });
   }
@@ -3536,27 +3617,46 @@ function buildBillsPanel(){
   tabsHeading.textContent = 'Bills';
   wrap.appendChild(tabsHeading);
   const newTabBtn = document.createElement('button');
-  newTabBtn.className = 'print-btn'; newTabBtn.style.margin = '6px 0';
+  newTabBtn.className = 'print-btn'; newTabBtn.style.margin = '6px 8px 6px 0';
   newTabBtn.textContent = '+ Nouvelle bill';
   wrap.appendChild(newTabBtn);
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Rechercher un client...';
+  searchInput.style.cssText = 'padding:7px 9px; border:1px solid var(--ink); background:var(--input-bg); font-family:inherit; font-size:0.9rem; width:200px;';
+  wrap.appendChild(searchInput);
+
   const tabsList = document.createElement('div');
   wrap.appendChild(tabsList);
 
+  let loadedTabs = [];
   newTabBtn.addEventListener('click', async ()=>{
     const name = prompt('Nom du client :');
     if(!name || !name.trim()) return;
     await sb.from('tabs').insert({ client_name: name.trim(), status:'open', rounds: [] });
     loadTabs();
   });
+  searchInput.addEventListener('input', renderTabsList);
+
+  function renderTabsList(){
+    const q = searchInput.value.trim().toLowerCase();
+    const filtered = q ? loadedTabs.filter(t=>t.client_name.toLowerCase().includes(q)) : loadedTabs;
+    tabsList.innerHTML = '';
+    if(filtered.length === 0){
+      tabsList.innerHTML = `<div class="stub">${loadedTabs.length===0 ? 'Aucune bill ouverte.' : 'Aucun résultat.'}</div>`;
+      return;
+    }
+    filtered.forEach(tab=>buildTabCard(tab));
+  }
 
   async function loadTabs(){
     tabsList.innerHTML = '<div class="stub">Chargement...</div>';
     try{
       const { data, error } = await sb.from('tabs').select('*').eq('status','open').order('created_at', {ascending:true});
       if(error) throw error;
-      tabsList.innerHTML = '';
-      if(!data || data.length === 0){ tabsList.innerHTML = '<div class="stub">Aucune tab ouverte.</div>'; return; }
-      data.forEach(tab=>buildTabCard(tab));
+      loadedTabs = data || [];
+      renderTabsList();
     }catch(e){ tabsList.innerHTML = '<div class="stub">Erreur de chargement.</div>'; }
   }
 
