@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.878</title>
+<title>Registre du bar v 2.879</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -608,7 +608,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.3</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.4</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -814,6 +814,7 @@ const shiftConfig = {
 
 function round2(n){ return Math.round(n*100)/100; }
 function roundInt(n){ return Math.round(Number(n)||0); } // beer counts are whole numbers — no fractions of a bottle
+function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); } // empty/missing = 0, per the "empty counts as zero" rule
 function enforceWholeNumber(input){
   input.addEventListener('change', ()=>{
     if(input.value === "") return;
@@ -2663,9 +2664,7 @@ function buildStockSection(shiftType, bucket){
   sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
   section.appendChild(sub);
 
-  // Empty ("") or missing = treated as 0 for comparisons, per your instruction — only a
-  // genuinely in-flight fetch (still loading) shows "..." instead of a number.
-  function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); }
+  // numOrZero is now a global function (see near roundInt) — empty/missing = 0.
 
   let yesterdayInventaire = null; // only fetched for the Day shift (may cross into last week)
 
@@ -3147,13 +3146,6 @@ function buildInventairePanel(){
   table.appendChild(tbody);
   wrap.appendChild(table);
 
-  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
-  // actually equal today's confirmed Nouveau Total? Empty/missing = treated as 0 here, per
-  // your instruction — only a real value mismatch is flagged.
-  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
-  // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
-  // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
-  // to whichever bartender shift's numbers look inconsistent, not to Inventaire itself.
   // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
   // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
   // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
