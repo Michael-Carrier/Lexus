@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.880</title>
+<title>Registre du bar v 2.882</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -608,10 +608,12 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.2</strong></p>
-  <div style="margin-top:8px; display:flex; gap:10px;">
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v5.9</strong></p>
+  <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
+    <button id="simpleBackBtn" class="print-btn no-print" style="display:none;">← Back</button>
+    <button id="simpleModeToggle" class="print-btn no-print" style="margin-left:auto;">Mode Simple</button>
   </div>
   <button id="notifBtn" class="print-btn no-print" style="position:absolute; top:28px; right:24px; display:none;"></button>
   <div id="notifDropdown" style="display:none;"></div>
@@ -647,6 +649,8 @@
     <button id="closePrefsBtn" class="stock-btn" style="margin-top:20px; width:100%;">Fermer</button>
   </div>
 </div>
+
+<div id="simpleModeHost" class="no-print" style="display:none;"></div>
 
 <div class="controls no-print" id="mainUI">
   <div class="control-row">
@@ -813,7 +817,16 @@ const shiftConfig = {
 };
 
 function round2(n){ return Math.round(n*100)/100; }
+// Converts to a number for saving to Supabase, but never sends NaN — an incomplete or
+// malformed entry (e.g. typing just "-" and moving on) becomes null instead of a value
+// that could make that whole row's upsert silently fail while other tables still save.
+function safeNum(v){
+  if(v === "" || v === undefined || v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 function roundInt(n){ return Math.round(Number(n)||0); } // beer counts are whole numbers — no fractions of a bottle
+function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); } // empty/missing = 0, per the "empty counts as zero" rule
 function enforceWholeNumber(input){
   input.addEventListener('change', ()=>{
     if(input.value === "") return;
@@ -895,7 +908,7 @@ const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
   barmaid: ['bartDay','bartNight','commander','bills','bottles'],
   janitor: ['inventaire'],
-  boss: ['bartDay','bartNight','bottles','bills','inventaire','delivery','misc','sunday','pdfSheets']
+  boss: ['bartDay','bartNight','bottles','inventaire','delivery','misc','sunday','pdfSheets']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
 
@@ -934,6 +947,220 @@ weekSelect.addEventListener('change', async ()=>{
   renderPanel();
 });
 
+// ---------- Simple Mode — big-button, drill-down navigation for an owner who finds
+// the normal tab bar overwhelming. Reuses every existing content-building function
+// unchanged; this only replaces the chrome around it with something much simpler.
+const mainUI = document.getElementById('mainUI');
+let simpleMode = localStorage.getItem('bar_simple_mode') === '1';
+let simpleNavPath = []; // [] = top menu; ['boss'] = a submenu; ['boss','bottlesDelivery'] = deeper still
+
+const BEER_INDICES = [0,1,2,3,4,5,6,7,11,12,13];
+const NONBEER_INDICES = [16,17,18,19,20,21,22,23,24];
+let simpleBeerIndex = { bartDay: 0, bartNight: 0 }; // carousel position, per shift
+
+const simpleTree = {
+  boss: { label: 'Boss Stuff', emoji: '💼', color: '#6E4520', children: {
+    bottlesDelivery: { label: 'Bottles/Beer Delivery', emoji: '🍾', color: '#8C5A2B', children: {
+      bottles: { label: 'Bottles', emoji: '🍾', color: '#8C5A2B', tab: 'bottles' },
+      delivery: { label: 'Beer Delivery', emoji: '🚚', color: '#4F7A3B', tab: 'delivery' }
+    }},
+    misc: { label: 'Poker', emoji: '🃏', color: '#B0402A', tab: 'misc' },
+    sunday: { label: 'Misc', emoji: '📝', color: '#2E4A5E', tab: 'sunday' },
+    pdfSheets: { label: 'Feuilles PDF', emoji: '📄', color: '#A566B8', tab: 'pdfSheets' }
+  }},
+  stock: { label: 'Stock du Quart', emoji: '📋', color: '#2E4A5E', children: {
+    bartDay: { label: 'Bartend Jour', emoji: '☀️', color: '#C98BD9', children: {
+      beers: { label: 'Bières', emoji: '🍺', color: '#8C5A2B', simple: 'beers', shiftType: 'bartDay' },
+      nonBeers: { label: 'Non-bières', emoji: '🥤', color: '#4F7A3B', simple: 'nonBeers', shiftType: 'bartDay' },
+      fut: { label: 'Fût', emoji: '🛢️', color: '#B0402A', simple: 'fut', shiftType: 'bartDay' }
+    }},
+    bartNight: { label: 'Bartend Nuit', emoji: '🌙', color: '#2E4A5E', children: {
+      beers: { label: 'Bières', emoji: '🍺', color: '#8C5A2B', simple: 'beers', shiftType: 'bartNight' },
+      nonBeers: { label: 'Non-bières', emoji: '🥤', color: '#4F7A3B', simple: 'nonBeers', shiftType: 'bartNight' },
+      fut: { label: 'Fût', emoji: '🛢️', color: '#B0402A', simple: 'fut', shiftType: 'bartNight' }
+    }},
+    inventaire: { label: 'Inventaire Journalier', emoji: '📋', color: '#6E4520', tab: 'inventaire' }
+  }}
+};
+
+// Simple Mode's three stock views — all reuse buildStockSection's existing, tested
+// carry-over and mismatch logic, just filtered/paginated differently.
+function buildSimpleStockLeaf(node){
+  const bucket = ensureBucket();
+  if(node.simple === 'beers'){
+    const idx = simpleBeerIndex[node.shiftType] || 0;
+    return buildStockSection(node.shiftType, bucket, {
+      itemFilter: BEER_INDICES, hideFut: true,
+      carousel: { index: idx, onChange: (newIdx)=>{ simpleBeerIndex[node.shiftType] = newIdx; renderSimpleUI(); } }
+    });
+  }
+  if(node.simple === 'nonBeers'){
+    return buildStockSection(node.shiftType, bucket, { itemFilter: NONBEER_INDICES, hideFut: true });
+  }
+  if(node.simple === 'fut'){
+    const section = buildStockSection(node.shiftType, bucket, { itemFilter: [], hideFut: false });
+    // Hide the (now-empty) bottled-beer heading/description/tables — they're always
+    // the first three children, appended before the Fût section either way.
+    Array.from(section.children).slice(0, 3).forEach(child=>{ child.style.display = 'none'; });
+    return section;
+  }
+  return document.createElement('div');
+}
+
+
+function simpleTreeNodeAt(path){
+  let node = { children: simpleTree };
+  for(const key of path){
+    if(!node.children || !node.children[key]) return null;
+    node = node.children[key];
+  }
+  return node;
+}
+
+const simpleModeHost = document.getElementById('simpleModeHost');
+const simpleBackBtn = document.getElementById('simpleBackBtn');
+const simpleModeToggle = document.getElementById('simpleModeToggle');
+simpleModeToggle.textContent = simpleMode ? 'Mode Normal' : 'Mode Simple';
+
+function setSimpleMode(on){
+  simpleMode = on;
+  try{ localStorage.setItem('bar_simple_mode', on ? '1' : '0'); }catch(e){}
+  simpleNavPath = [];
+  simpleModeToggle.textContent = on ? 'Mode Normal' : 'Mode Simple';
+  if(state.role){
+    if(!on) panelHost.style.display = 'block'; // safe here — this only ever runs post-login
+    renderTabs();
+  }
+}
+simpleModeToggle.addEventListener('click', ()=> setSimpleMode(!simpleMode));
+simpleBackBtn.addEventListener('click', ()=>{
+  if(simpleNavPath.length === 0) return;
+  simpleNavPath.pop();
+  renderSimpleUI();
+});
+
+function bigButton(label, color, emoji, onClick){
+  const btn = document.createElement('button');
+  btn.style.cssText = `display:block; width:100%; padding:20px 10px; font-size:1.1rem; font-weight:700;
+    color:#fff; background:${color}; border:none; border-radius:6px; cursor:pointer; text-align:center;`;
+  btn.innerHTML = `<div style="font-size:1.8rem; margin-bottom:4px;">${emoji}</div>${label}`;
+  btn.addEventListener('mouseenter', ()=>{ btn.style.filter = 'brightness(1.1)'; });
+  btn.addEventListener('mouseleave', ()=>{ btn.style.filter = ''; });
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+// Floating Enregistrer + Back-to-top — always visible bottom-right, regardless of
+// scroll position, since the point of Simple Mode is never having to hunt for a button.
+let simpleFloatHost = document.getElementById('simpleFloatHost');
+if(!simpleFloatHost){
+  simpleFloatHost = document.createElement('div');
+  simpleFloatHost.id = 'simpleFloatHost';
+  simpleFloatHost.style.cssText = 'position:fixed; bottom:20px; right:20px; z-index:500; display:none; gap:10px;';
+  document.body.appendChild(simpleFloatHost);
+}
+function showSimpleFloatButtons(onSave){
+  simpleFloatHost.innerHTML = '';
+  simpleFloatHost.style.display = 'flex';
+  const topBtn = document.createElement('button');
+  topBtn.className = 'print-btn';
+  topBtn.textContent = '⬆ Top';
+  topBtn.style.cssText += 'padding:14px 18px; font-size:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+  topBtn.addEventListener('click', ()=> window.scrollTo({top:0, behavior:'smooth'}));
+  simpleFloatHost.appendChild(topBtn);
+  if(onSave){
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'primary';
+    saveBtn.textContent = 'Enregistrer';
+    saveBtn.style.cssText += 'padding:14px 22px; font-size:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+    saveBtn.addEventListener('click', onSave);
+    simpleFloatHost.appendChild(saveBtn);
+  }
+}
+function hideSimpleFloatButtons(){ simpleFloatHost.style.display = 'none'; }
+
+function renderSimpleUI(){
+  mainUI.style.display = 'none';
+  tabBar.style.display = 'none';
+  simpleModeHost.style.display = 'block';
+  simpleBackBtn.style.display = 'inline-block';
+  simpleBackBtn.disabled = simpleNavPath.length === 0;
+  simpleModeHost.innerHTML = '';
+  hideSimpleFloatButtons();
+
+  if(state.role === 'boss'){
+    const aiBtn = bigButton('Demander à l\'IA', '#2E4A5E', '🤖', ()=>{
+      const box = document.getElementById('askAiBox');
+      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    });
+    aiBtn.style.marginBottom = '14px';
+    simpleModeHost.appendChild(aiBtn);
+  }
+
+  const weekRow = document.createElement('div');
+  weekRow.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:14px; padding:16px; border:1px solid var(--ink); font-size:1.1rem;';
+  const weekPrev = document.createElement('button'); weekPrev.className='print-btn'; weekPrev.textContent = '←';
+  const weekLabel = document.createElement('span'); weekLabel.textContent = weekSelect.options[weekSelect.selectedIndex].textContent;
+  const weekNext = document.createElement('button'); weekNext.className='print-btn'; weekNext.textContent = '→';
+  function shiftWeek(delta){
+    const idx = weekSelect.selectedIndex + delta;
+    if(idx < 0 || idx >= weekSelect.options.length) return;
+    weekSelect.selectedIndex = idx;
+    weekSelect.dispatchEvent(new Event('change'));
+  }
+  weekPrev.addEventListener('click', ()=>shiftWeek(-1));
+  weekNext.addEventListener('click', ()=>shiftWeek(1));
+  weekRow.appendChild(weekPrev); weekRow.appendChild(weekLabel); weekRow.appendChild(weekNext);
+  simpleModeHost.appendChild(weekRow);
+
+  const dayRow = document.createElement('div');
+  dayRow.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid var(--ink); font-size:1.1rem;';
+  const dayPrev = document.createElement('button'); dayPrev.className='print-btn'; dayPrev.textContent = '←';
+  const dayLabel = document.createElement('span'); dayLabel.textContent = state.day;
+  const dayNext = document.createElement('button'); dayNext.className='print-btn'; dayNext.textContent = '→';
+  function shiftDay(delta){
+    const idx = (dayNames.indexOf(state.day) + delta + dayNames.length) % dayNames.length;
+    state.day = dayNames[idx];
+    state.subView = null; state.pdfView = null;
+    renderDayButtons(); renderTabs(); renderPanel();
+  }
+  dayPrev.addEventListener('click', ()=>shiftDay(-1));
+  dayNext.addEventListener('click', ()=>shiftDay(1));
+  dayRow.appendChild(dayPrev); dayRow.appendChild(dayLabel); dayRow.appendChild(dayNext);
+  simpleModeHost.appendChild(dayRow);
+
+  const currentNode = simpleTreeNodeAt(simpleNavPath);
+  if(currentNode && currentNode.simple){
+    panelHost.style.display = 'none';
+    const leafWrap = document.createElement('div');
+    leafWrap.appendChild(buildSimpleStockLeaf(currentNode));
+    simpleModeHost.appendChild(leafWrap);
+    // buildStockSection alone has no save button of its own (that normally comes from
+    // buildShiftPanel) — the floating button drives the same shared save function directly.
+    showSimpleFloatButtons(()=> saveData({ set textContent(v){} }));
+  } else if(currentNode && currentNode.tab){
+    state.tab = currentNode.tab;
+    panelHost.style.display = 'block';
+    renderPanel();
+    const realStatusEl = panelHost.querySelector('.bottom-bar .status');
+    showSimpleFloatButtons(()=> saveData(realStatusEl || { set textContent(v){} }));
+  } else {
+    panelHost.style.display = 'none';
+    panelHost.innerHTML = '';
+    const node = currentNode || { children: simpleTree };
+    const entries = Object.entries(node.children);
+    const grid = document.createElement('div');
+    grid.style.cssText = `display:grid; grid-template-columns:repeat(${entries.length >= 3 ? 2 : 1}, 1fr); gap:14px; max-width:480px; margin:0 auto;`;
+    entries.forEach(([key, child])=>{
+      grid.appendChild(bigButton(child.label, child.color || '#8C5A2B', child.emoji || '▶️', ()=>{
+        simpleNavPath.push(key);
+        renderSimpleUI();
+      }));
+    });
+    simpleModeHost.appendChild(grid);
+  }
+}
+
 const dayButtonsHost = document.getElementById('dayButtons');
 function renderDayButtons(){
   dayButtonsHost.innerHTML = "";
@@ -954,6 +1181,21 @@ function tabIsActiveForDay(t){
   return t.restrictedTo.includes(state.day);
 }
 function renderTabs(){
+  // Simple Mode only makes sense post-login (state.role set) — panelHost also doesn't
+  // exist yet at the very first pre-login call, so this guard avoids a load-order crash.
+  if(simpleMode && state.role){
+    mainUI.style.display = 'none';
+    renderSimpleUI();
+    return;
+  }
+  mainUI.style.display = '';
+  tabBar.style.display = '';
+  simpleModeHost.style.display = 'none';
+  simpleBackBtn.style.display = 'none';
+  // (panelHost itself gets shown again when leaving Simple Mode via setSimpleMode(),
+  // which only ever runs post-login — referencing it here would hit it before its
+  // own declaration further down the script, on the very first pre-login call.)
+
   tabBar.innerHTML = "";
   const allowed = roleTabs[state.role] || [];
   tabs.filter(t=>allowed.includes(t.id)).forEach(t=>{
@@ -1153,6 +1395,19 @@ async function fetchInventaireDay(weekK, dayN){
     return row.items || null;
   }catch(e){ return null; }
 }
+// Fetches a specific week's confirmed end-of-week stock directly — needed for #5 Beer
+// Inventory's Start column, which otherwise depended on that week already happening to
+// be loaded in memory from unrelated navigation (a real bug — this closes it properly).
+async function fetchWeekConfirmedStock(weekK){
+  try{
+    const { data: row, error } = await sb.from('week_settings').select('confirmed_end_of_week_stock').eq('week_key', weekK).maybeSingle();
+    if(error || !row) return null;
+    const raw = row.confirmed_end_of_week_stock;
+    if(typeof raw === 'string'){ try{ return JSON.parse(raw); }catch(e){ return null; } }
+    return raw || null;
+  }catch(e){ return null; }
+}
+let prevWeekConfirmedStockCache = { weekKey: null, confirmedStock: null };
 // Fetches one specific shift's Fût data — needed when yesterday's Night shift
 // (which today's Day Fût Début chains from) isn't the currently-loaded week.
 async function fetchShiftFut(weekK, dayN, shiftT){
@@ -1388,7 +1643,16 @@ function buildInventorySheet(){
 
   // Start = Debut (previous week's confirmed Nouveau Total from Inventaire Journalier,
   // confirmed on Sunday) + this week's Monday delivery + Thursday delivery.
-  const prevConfirmed = data[prevWeekK]?.sunday?.confirmedEndOfWeekStock || null;
+  // Fetched directly rather than assumed to already be in memory — that was the actual
+  // bug: it used to only work if that other week happened to already be loaded from
+  // unrelated navigation, which is exactly the "visit last week, then it works" symptom.
+  if(prevWeekConfirmedStockCache.weekKey !== prevWeekK){
+    fetchWeekConfirmedStock(prevWeekK).then(stock=>{
+      prevWeekConfirmedStockCache = { weekKey: prevWeekK, confirmedStock: stock };
+      if(state.tab === 'pdfSheets' && state.pdfView === '#5 Inventory Summary') renderPanel();
+    });
+  }
+  const prevConfirmed = (prevWeekConfirmedStockCache.weekKey === prevWeekK) ? prevWeekConfirmedStockCache.confirmedStock : null;
 
   const debutByItem = {}, startByItem = {}, finTopByItem = {};
   items.forEach(item=>{
@@ -2615,7 +2879,12 @@ function buildShiftPanel(shiftType){
   return wrap;
 }
 
-function buildStockSection(shiftType, bucket){
+function buildStockSection(shiftType, bucket, options){
+  options = options || {};
+  const itemFilter = options.itemFilter || null; // array of allowed inventaireItems indices, or null = show all
+  const hideFut = !!options.hideFut;
+  const carousel = options.carousel || null; // {index, onChange} — one-at-a-time mode for this filtered set
+
   if(!bucket[shiftType]) bucket[shiftType] = {};
   const store = bucket[shiftType];
   if(!store.stock) store.stock = {};
@@ -2663,9 +2932,7 @@ function buildStockSection(shiftType, bucket){
   sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
   section.appendChild(sub);
 
-  // Empty ("") or missing = treated as 0 for comparisons, per your instruction — only a
-  // genuinely in-flight fetch (still loading) shows "..." instead of a number.
-  function numOrZero(v){ return (v===""||v===undefined||v===null) ? 0 : Number(v); }
+  // numOrZero is now a global function (see near roundInt) — empty/missing = 0.
 
   let yesterdayInventaire = null; // only fetched for the Day shift (may cross into last week)
 
@@ -2775,6 +3042,7 @@ function buildStockSection(shiftType, bucket){
 
   inventaireItems.forEach((item, idx)=>{
     if(item.spacer){
+      if(itemFilter) return; // spacer rows only make sense in the full unfiltered layout
       [leftBody, mainBody, rightBody].forEach((body, bi)=>{
         const tr = document.createElement('tr'); tr.className = 'spacer';
         tr.innerHTML = `<td colspan="${bi===1?6:1}"></td>`;
@@ -2782,6 +3050,7 @@ function buildStockSection(shiftType, bucket){
       });
       return;
     }
+    if(itemFilter && !itemFilter.includes(idx)) return;
     const key = `row${idx}`;
     if(!store.stock[key]) store.stock[key] = { debut:"", ajoutBeers:"", fin:"", total:"", debutManual:false };
     const rowStore = store.stock[key];
@@ -2886,6 +3155,7 @@ function buildStockSection(shiftType, bucket){
   // Chains like the bottled beers: Night's Début comes from today's Day Fin (same day,
   // already in memory); Day's Début comes from yesterday's Night Fin (may cross into
   // last week, needs a fetch).
+  if(!hideFut){
   if(!store.fut) store.fut = {};
   const futHeading = document.createElement('h2');
   futHeading.textContent = 'Fût';
@@ -3011,6 +3281,54 @@ function buildStockSection(shiftType, bucket){
       renderPanel();
     });
     section.appendChild(addTapBtn);
+  }
+  } // end if(!hideFut)
+
+  // Carousel mode (Simple Mode's beer-by-beer view) — hide every row except the current
+  // one across all three tables, and show the adjacent items' names for context.
+  if(carousel && itemFilter && itemFilter.length){
+    const idx = Math.max(0, Math.min(carousel.index, itemFilter.length-1));
+    const currentItemIdx = itemFilter[idx];
+    const prevItemIdx = idx > 0 ? itemFilter[idx-1] : null;
+    const nextItemIdx = idx < itemFilter.length-1 ? itemFilter[idx+1] : null;
+
+    // Hide every item row in all three tables except the one at the current carousel position.
+    section.querySelectorAll('table.stock-align-table').forEach(table=>{
+      Array.from(table.querySelectorAll('tbody tr')).forEach((tr, rowPos)=>{
+        tr.style.display = (rowPos === idx) ? '' : 'none';
+      });
+    });
+
+    const navWrap = document.createElement('div');
+    navWrap.style.cssText = 'text-align:center; margin-top:14px;';
+    const prevLabel = document.createElement('div');
+    prevLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-bottom:6px;';
+    prevLabel.textContent = prevItemIdx !== null ? `↑ ${inventaireItems[prevItemIdx].name}` : '';
+    const upBtn = document.createElement('button');
+    upBtn.className = 'primary'; upBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
+    upBtn.textContent = '▲';
+    upBtn.disabled = idx === 0;
+    const currentLabel = document.createElement('div');
+    currentLabel.style.cssText = 'font-weight:700; font-size:1.3rem; margin:10px 0;';
+    currentLabel.textContent = inventaireItems[currentItemIdx].name;
+    const downBtn = document.createElement('button');
+    downBtn.className = 'primary'; downBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
+    downBtn.textContent = '▼';
+    downBtn.disabled = idx === itemFilter.length-1;
+    const nextLabel = document.createElement('div');
+    nextLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-top:6px;';
+    nextLabel.textContent = nextItemIdx !== null ? `↓ ${inventaireItems[nextItemIdx].name}` : '';
+
+    upBtn.addEventListener('click', ()=>{ if(carousel.onChange) carousel.onChange(idx-1); });
+    downBtn.addEventListener('click', ()=>{ if(carousel.onChange) carousel.onChange(idx+1); });
+
+    navWrap.appendChild(prevLabel);
+    const btnRow = document.createElement('div');
+    btnRow.appendChild(upBtn); btnRow.appendChild(downBtn);
+    navWrap.appendChild(currentLabel);
+    navWrap.appendChild(btnRow);
+    navWrap.appendChild(nextLabel);
+    section.insertBefore(navWrap, section.firstChild.nextSibling);
   }
 
   return section;
@@ -3147,13 +3465,6 @@ function buildInventairePanel(){
   table.appendChild(tbody);
   wrap.appendChild(table);
 
-  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
-  // actually equal today's confirmed Nouveau Total? Empty/missing = treated as 0 here, per
-  // your instruction — only a real value mismatch is flagged.
-  // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
-  // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
-  // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
-  // to whichever bartender shift's numbers look inconsistent, not to Inventaire itself.
   // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
   // actually equal today's confirmed Nouveau Total? Inventaire is always treated as the
   // objective source of truth (the janitor is sober on the job) — a mismatch is attributed
@@ -4277,13 +4588,13 @@ function storeToShiftRow(weekKey, day, shiftType, store){
   return {
     week_key: weekKey, day, shift_type: shiftType,
     bartender: store.bartender || null, start_time: store.start || null, end_time: store.end || null,
-    over: store.over===""?null:Number(store.over),
-    jour: store.jour===""?null:Number(store.jour),
-    nuit: store.nuit===""?null:Number(store.nuit),
-    interac_total: store.interac?.total===""?null:Number(store.interac?.total),
-    interac_subtotal: store.interac?.subtotal===""?null:Number(store.interac?.subtotal),
-    interac_tps: store.interac?.tps===""?null:Number(store.interac?.tps),
-    interac_tvq: store.interac?.tvq===""?null:Number(store.interac?.tvq),
+    over: safeNum(store.over),
+    jour: safeNum(store.jour),
+    nuit: safeNum(store.nuit),
+    interac_total: safeNum(store.interac?.total),
+    interac_subtotal: safeNum(store.interac?.subtotal),
+    interac_tps: safeNum(store.interac?.tps),
+    interac_tvq: safeNum(store.interac?.tvq),
     has_second_bartender: !!store.hasSecondBartender,
     bartender2: store.bartender2 || null, start_time2: store.start2 || null, end_time2: store.end2 || null,
     needs_review: !!store.needsReview,
@@ -4302,17 +4613,17 @@ function pokerRowToStore(row){
 function storeToWeekSettingsRow(weekKey, sun){
   return {
     week_key: weekKey,
-    env: sun.env===""?null:Number(sun.env), factures: sun.factures===""?null:Number(sun.factures),
-    pool_tbxl: sun.poolTbxl===""?null:Number(sun.poolTbxl), pool_over: sun.poolOver===""?null:Number(sun.poolOver),
-    pinuts_tbxl: sun.pinutsTbxl===""?null:Number(sun.pinutsTbxl), fact_over: sun.factOver===""?null:Number(sun.factOver),
-    reading: sun.reading===""?null:Number(sun.reading),
-    bouteilles: sun.bouteilles===""?null:Number(sun.bouteilles), autres: sun.autres===""?null:Number(sun.autres),
-    paie_jaboin: sun.paieJaboin===""?null:Number(sun.paieJaboin),
-    guich_caisses: sun.guichCaisses===""?null:Number(sun.guichCaisses), paye_dan: sun.payeDan===""?null:Number(sun.payeDan),
-    depot: sun.depot===""?null:Number(sun.depot),
-    depot_overall: sun.depotOverall===""?null:Number(sun.depotOverall),
+    env: safeNum(sun.env), factures: safeNum(sun.factures),
+    pool_tbxl: safeNum(sun.poolTbxl), pool_over: safeNum(sun.poolOver),
+    pinuts_tbxl: safeNum(sun.pinutsTbxl), fact_over: safeNum(sun.factOver),
+    reading: safeNum(sun.reading),
+    bouteilles: safeNum(sun.bouteilles), autres: safeNum(sun.autres),
+    paie_jaboin: safeNum(sun.paieJaboin),
+    guich_caisses: safeNum(sun.guichCaisses), paye_dan: safeNum(sun.payeDan),
+    depot: safeNum(sun.depot),
+    depot_overall: safeNum(sun.depotOverall),
     depart_manual_override: !!sun.departManualOverride,
-    depart_manual_value: sun.departManualValue===""?null:Number(sun.departManualValue),
+    depart_manual_value: safeNum(sun.departManualValue),
     custom_lines: sun.customLines || []
     // confirmed_end_of_week_stock deliberately excluded — it's written ONLY by
     // saveConfirmedEndOfWeekStock(), never by a regular save, so an ordinary
@@ -4379,10 +4690,10 @@ async function syncWeekToSupabase(weekKey){
       if(bucket[st]) shiftRows.push(storeToShiftRow(weekKey, d, st, bucket[st]));
     });
     if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net})=>({
-      coupons: coupons===""?null:Number(coupons), argent: argent===""?null:Number(argent),
-      total: total===""?null:Number(total), machine: machine===""?null:Number(machine),
-      guichet: guichet===""?null:Number(guichet),
-      net: net===""?null:Number(net)
+      coupons: safeNum(coupons), argent: safeNum(argent),
+      total: safeNum(total), machine: safeNum(machine),
+      guichet: safeNum(guichet),
+      net: safeNum(net)
     }))(bucket.misc) });
     if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
     if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
@@ -4390,16 +4701,24 @@ async function syncWeekToSupabase(weekKey){
   });
 
   const ops = [];
-  if(shiftRows.length) ops.push(sb.from('shifts').upsert(shiftRows, {onConflict:'week_key,day,shift_type'}));
-  if(pokerRows.length) ops.push(sb.from('poker_daily').upsert(pokerRows, {onConflict:'week_key,day'}));
-  if(invRows.length) ops.push(sb.from('inventaire_daily').upsert(invRows, {onConflict:'week_key,day'}));
-  if(delRows.length) ops.push(sb.from('delivery_daily').upsert(delRows, {onConflict:'week_key,day'}));
-  if(bottlesRows.length) ops.push(sb.from('bottles_daily').upsert(bottlesRows, {onConflict:'week_key,day'}));
-  if(weekData.sunday) ops.push(sb.from('week_settings').upsert(storeToWeekSettingsRow(weekKey, weekData.sunday), {onConflict:'week_key'}));
+  const opLabels = [];
+  if(shiftRows.length){ ops.push(sb.from('shifts').upsert(shiftRows, {onConflict:'week_key,day,shift_type'})); opLabels.push('Quarts de travail'); }
+  if(pokerRows.length){ ops.push(sb.from('poker_daily').upsert(pokerRows, {onConflict:'week_key,day'})); opLabels.push('Poker'); }
+  if(invRows.length){ ops.push(sb.from('inventaire_daily').upsert(invRows, {onConflict:'week_key,day'})); opLabels.push('Inventaire Journalier'); }
+  if(delRows.length){ ops.push(sb.from('delivery_daily').upsert(delRows, {onConflict:'week_key,day'})); opLabels.push('Beer Delivery'); }
+  if(bottlesRows.length){ ops.push(sb.from('bottles_daily').upsert(bottlesRows, {onConflict:'week_key,day'})); opLabels.push('Bottles'); }
+  if(weekData.sunday){ ops.push(sb.from('week_settings').upsert(storeToWeekSettingsRow(weekKey, weekData.sunday), {onConflict:'week_key'})); opLabels.push('Misc./Sunday'); }
 
   const results = await Promise.all(ops);
-  const failed = results.find(r=>r.error);
-  if(failed) throw failed.error;
+  const failedIdx = results.findIndex(r=>r.error);
+  if(failedIdx !== -1){
+    // Every OTHER table in this same save may well have gone through fine — naming the
+    // one that didn't means the person knows exactly what to check and re-save, instead
+    // of assuming nothing worked (or worse, not realizing anything was missed at all).
+    const err = new Error(`${opLabels[failedIdx]} n'a pas pu être enregistré — ${results[failedIdx].error.message}`);
+    err.partialFailure = opLabels[failedIdx];
+    throw err;
+  }
 }
 
 // Big, hard-to-miss confirmation, in addition to the small status text — easy to
@@ -4426,7 +4745,7 @@ function showSaveToast(message, isError){
   toast._hideTimer = setTimeout(()=>{
     toast.style.opacity = '0';
     toast.style.transform = 'translateX(-50%) translateY(-20px)';
-  }, 2200);
+  }, isError ? 6000 : 2200); // errors stay up much longer — missing one is far worse than missing a success
 }
 
 async function saveData(statusEl){
@@ -4438,7 +4757,7 @@ async function saveData(statusEl){
     showSaveToast(`✓ Enregistré — ${now}`, false);
   }catch(e){
     statusEl.textContent = `Erreur d'enregistrement — ${e.message||e}`;
-    showSaveToast(`⚠ Erreur d'enregistrement`, true);
+    showSaveToast(e.partialFailure ? `⚠ ${e.partialFailure} pas enregistré!` : `⚠ Erreur d'enregistrement`, true);
   }
 }
 
@@ -4535,6 +4854,13 @@ logoutBtn.addEventListener('click', ()=>{
   loginScreen.style.display = 'flex';
   pinInput.value = ''; loginError.textContent = '';
   document.getElementById('askAiBox').style.display = 'none';
+  // Reset cross-request caches so a role switch never shows one person's stale,
+  // already-loaded data to whoever logs in next in the same browser tab.
+  futYesterdayCache = { key: null, data: null };
+  prevSundayInventaireCache = { weekKey: null, items: null };
+  bottlesAllHistoryCache = { loaded: false, rows: [] };
+  bottlesOwnerStateCache = { loaded: false, map: {} };
+  prevWeekConfirmedStockCache = { weekKey: null, confirmedStock: null };
 });
 
 // ---------- Notifications (boss only) ----------
