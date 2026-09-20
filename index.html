@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.883</title>
+<title>Registre du bar v 2.884</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -608,7 +608,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v6.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v6.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1246,6 +1246,11 @@ function renderSimpleUI(){
   mainUI.style.display = 'none';
   tabBar.style.display = 'none';
   simpleModeHost.style.display = 'block';
+  // askAiBox may have been moved into simpleModeHost by a previous render (see the AI
+  // section below) — move it back out to a safe, persistent spot first, since wiping
+  // simpleModeHost's innerHTML would otherwise destroy it from the page entirely rather
+  // than just detaching it, and every later getElementById('askAiBox') would return null.
+  document.body.appendChild(document.getElementById('askAiBox'));
   simpleModeHost.innerHTML = '';
   hideSimpleFloatButtons();
   // Only one carousel's keyboard listener should ever be live — clear it here so
@@ -1295,10 +1300,17 @@ function renderSimpleUI(){
   simpleModeHost.appendChild(navBtnRow);
 
   if(state.role === 'boss'){
-    const aiBtn = bigButton('Demander à l\'IA', '#2E4A5E', '🤖', ()=>{
-      const box = document.getElementById('askAiBox');
-      box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    const aiBox = document.getElementById('askAiBox');
+    const isOpen = aiBox.style.display !== 'none';
+    // Moves the box (not a copy — the real element, so all its wiring stays intact)
+    // right here, between the nav row above and the toggle button below.
+    simpleModeHost.appendChild(aiBox);
+
+    const aiBtn = bigButton(isOpen ? 'Fermer l\'IA' : 'Demander à l\'IA', isOpen ? '#9AB6D9' : '#2E4A5E', '🤖', ()=>{
+      aiBox.style.display = isOpen ? 'none' : 'block';
+      renderSimpleUI(); // rebuild so the button's label/color and the box's position stay in sync
     });
+    if(isOpen) aiBtn.style.color = 'var(--ink)'; // light blue background needs dark text, not the default white
     aiBtn.style.marginBottom = '14px';
     simpleModeHost.appendChild(aiBtn);
   }
@@ -1339,6 +1351,37 @@ function renderSimpleUI(){
   if(currentNode && currentNode.simple){
     panelHost.style.display = 'none';
     const leafWrap = document.createElement('div');
+
+    // If this leaf has sibling "simple" leaves under the same parent (Bières / Non-bières /
+    // Fût), show them all on one row so you can switch directly between them without
+    // going Back first — the active one sits there greyed out, the others stay clickable.
+    const parentNode = simpleTreeNodeAt(simpleNavPath.slice(0, -1));
+    if(parentNode && parentNode.children){
+      const siblingEntries = Object.entries(parentNode.children).filter(([,c])=>c.simple);
+      if(siblingEntries.length > 1){
+        const siblingRow = document.createElement('div');
+        siblingRow.style.cssText = 'display:flex; justify-content:center; gap:10px; margin-bottom:14px;';
+        siblingEntries.forEach(([key, child])=>{
+          const isActive = simpleNavPath[simpleNavPath.length-1] === key;
+          const btn = document.createElement('button');
+          btn.style.cssText = `width:130px; padding:14px 6px; font-size:0.95rem; font-weight:700; border:none;
+            border-radius:6px; background:${isActive ? '#D8D0C2' : child.color}; color:${isActive ? 'var(--ink-soft)' : '#fff'};
+            cursor:${isActive ? 'default' : 'pointer'};`;
+          btn.innerHTML = `<div style="font-size:1.3rem;">${child.emoji}</div>${child.label}`;
+          btn.disabled = isActive;
+          if(!isActive){
+            btn.addEventListener('click', ()=>{
+              simpleNavPath[simpleNavPath.length-1] = key;
+              simpleModeDirty = false; // switching sibling views — treat like fresh navigation
+              renderSimpleUI();
+            });
+          }
+          siblingRow.appendChild(btn);
+        });
+        leafWrap.appendChild(siblingRow);
+      }
+    }
+
     leafWrap.appendChild(buildSimpleStockLeaf(currentNode));
     simpleModeHost.appendChild(leafWrap);
     attachDirtyTracking(leafWrap);
@@ -1368,13 +1411,23 @@ function renderSimpleUI(){
     const node = currentNode || { children: simpleTree };
     const entries = Object.entries(node.children);
     const grid = document.createElement('div');
-    grid.style.cssText = `display:grid; grid-template-columns:repeat(${entries.length >= 3 ? 2 : 1}, 1fr); gap:14px; max-width:480px; margin:0 auto;`;
+    if(entries.length === 3){
+      // Exactly 3 (like Bières/Non-bières/Fût) — one centered row of narrower buttons,
+      // not a 2-then-1 wrap that leaves the last one looking stranded.
+      grid.style.cssText = 'display:flex; justify-content:center; gap:14px; flex-wrap:wrap;';
+    } else if(entries.length >= 4){
+      grid.style.cssText = 'display:grid; grid-template-columns:repeat(2, 1fr); gap:14px; max-width:480px; margin:0 auto;';
+    } else {
+      grid.style.cssText = 'display:grid; grid-template-columns:repeat(1, 1fr); gap:14px; max-width:480px; margin:0 auto;';
+    }
     entries.forEach(([key, child])=>{
-      grid.appendChild(bigButton(child.label, child.color || '#8C5A2B', child.emoji || '▶️', ()=>{
+      const btn = bigButton(child.label, child.color || '#8C5A2B', child.emoji || '▶️', ()=>{
         simpleNavPath.push(key);
         simpleModeDirty = false;
         renderSimpleUI();
-      }));
+      });
+      if(entries.length === 3) btn.style.width = '160px';
+      grid.appendChild(btn);
     });
     simpleModeHost.appendChild(grid);
   }
@@ -1699,15 +1752,17 @@ function computeWeekTransactionTotals(weekK){
 }
 
 function computeWeekPokerTotals(weekK){
-  let coupons=0, inserted=0, argent=0, machine=0, guichet=0;
+  let coupons=0, inserted=0, machine=0, guichet=0;
   dayNames.forEach(d=>{
     const b = bucketFor(weekK, d);
     coupons += Number(b.misc?.coupons)||0;
     inserted += Number(b.misc?.total)||0;
-    argent += Number(b.misc?.argent)||0;
     machine += Number(b.misc?.machine)||0;
     guichet += Number(b.misc?.guichet)||0;
   });
+  // Argent isn't cumulative across the week — it's a running accounting note the owner
+  // overwrites each day, and Sunday's value is the one that actually counts for the week.
+  const argent = Number(bucketFor(weekK, 'Dimanche')?.misc?.argent) || 0;
   const total = round2(coupons + argent + machine + guichet); // B17
   const overPoker = round2(total - inserted); // D17
   return {coupons, inserted, argent, machine, guichet, total, overPoker};
@@ -2405,15 +2460,17 @@ function buildShiftSummarySheet(){
 }
 
 function computeWeekPokerFull(weekK){
-  let win=0, inserted=0, argent=0, machine=0, guichet=0;
+  let win=0, inserted=0, machine=0, guichet=0;
   dayNames.forEach(d=>{
     const b = bucketFor(weekK, d);
     win += Number(b.misc?.coupons)||0;
     inserted += Number(b.misc?.total)||0;
-    argent += Number(b.misc?.argent)||0;
     machine += Number(b.misc?.machine)||0;
     guichet += Number(b.misc?.guichet)||0;
   });
+  // Argent is Sunday's value only — it's a running note the owner overwrites each day,
+  // not something that accumulates across the week.
+  const argent = Number(bucketFor(weekK, 'Dimanche')?.misc?.argent) || 0;
   const B12 = round2(win), F12 = round2(inserted);
   const B14 = round2(argent), B15 = round2(machine), B16 = round2(guichet);
   const B17 = round2(B12+B14+B15+B16);
@@ -2776,6 +2833,8 @@ function buildSundayPanel(){
   return wrap;
 }
 
+let miscSubView = 'daily'; // 'daily' | 'summary' — which button is currently active on the Poker tab
+
 function buildMiscPanel(){
   const bucket = ensureBucket();
   if(!bucket.misc) bucket.misc = {};
@@ -2783,88 +2842,168 @@ function buildMiscPanel(){
 
   if(store.argent === undefined) store.argent = "";
   if(store.total === undefined) store.total = "";
+  if(store.net === undefined) store.net = "";
+  if(store.coupons === undefined) store.coupons = "";
   if(store.machine === undefined) store.machine = "";
   if(store.guichet === undefined) store.guichet = "";
+  if(!store.machineTotals) store.machineTotals = ["","","","",""];
+  if(!store.machineNets) store.machineNets = ["","","","",""];
+  if(!store.couponList) store.couponList = [];
 
   const wrap = document.createElement('div');
-  wrap.innerHTML = `
-    <h2>Poker</h2>
-    <div class="sub">${weekSelect.options[weekSelect.selectedIndex].textContent}. Coupons/Win et Total inséré — toute la semaine visible, seul ${state.day} est modifiable ici.</div>
-  `;
+  wrap.innerHTML = `<h2>Poker</h2>`;
 
-  // Weekly grid: Coupons/Win + Total inséré + Net, all 7 days visible, only the selected day editable.
-  const table = document.createElement('table');
-  table.className = 'form-table';
-  table.innerHTML = `<thead><tr><th>Jour</th><th>Coupons/Win</th><th>Total inséré</th><th>Net</th></tr></thead>`;
-  const tbody = document.createElement('tbody');
-  dayNames.forEach(d=>{
-    const dayBucket = bucketFor(state.week, d);
-    if(!dayBucket.misc) dayBucket.misc = {};
-    const dStore = dayBucket.misc;
-    if(dStore.coupons === undefined) dStore.coupons = "";
-    if(dStore.total === undefined) dStore.total = "";
-    if(dStore.net === undefined) dStore.net = "";
+  const toggleRow = document.createElement('div');
+  toggleRow.className = 'no-print';
+  toggleRow.style.cssText = 'display:flex; gap:10px; margin-bottom:16px;';
+  const dailyBtn = document.createElement('button');
+  dailyBtn.className = miscSubView === 'daily' ? 'primary' : 'print-btn';
+  dailyBtn.textContent = 'Détails du jour';
+  dailyBtn.addEventListener('click', ()=>{ miscSubView = 'daily'; renderPanel(); });
+  const summaryBtn = document.createElement('button');
+  summaryBtn.className = miscSubView === 'summary' ? 'primary' : 'print-btn';
+  summaryBtn.textContent = 'Résumé de la semaine';
+  summaryBtn.addEventListener('click', ()=>{ miscSubView = 'summary'; renderPanel(); });
+  toggleRow.appendChild(dailyBtn); toggleRow.appendChild(summaryBtn);
+  wrap.appendChild(toggleRow);
 
-    const isActive = d === state.day;
-    const tr = document.createElement('tr');
-    if(!isActive) tr.style.opacity = '0.4';
-
-    const tdDay = document.createElement('td'); tdDay.textContent = d;
-    if(isActive) tdDay.style.fontWeight = '700';
-
-    const tdCoupons = document.createElement('td');
-    const inCoupons = document.createElement('input');
-    inCoupons.type='number'; inCoupons.className='num'; inCoupons.value = dStore.coupons;
-    inCoupons.disabled = !isActive;
-    inCoupons.addEventListener('input', ()=>{ dStore.coupons = inCoupons.value; });
-
-    const tdTotal = document.createElement('td');
-    const inTotal = document.createElement('input');
-    inTotal.type='number'; inTotal.className='num'; inTotal.value = dStore.total;
-    inTotal.disabled = !isActive;
-    inTotal.addEventListener('input', ()=>{ dStore.total = inTotal.value; });
-
-    // Net is its own independent number the owner tracks manually — never derived
-    // from Total inséré − Coupons/Win, on purpose (confirmed this doesn't reflect reality).
-    const tdNet = document.createElement('td');
-    const inNet = document.createElement('input');
-    inNet.type='number'; inNet.className='num'; inNet.value = dStore.net;
-    inNet.disabled = !isActive;
-    inNet.addEventListener('input', ()=>{ dStore.net = inNet.value; });
-
-    tdCoupons.appendChild(inCoupons); tdTotal.appendChild(inTotal); tdNet.appendChild(inNet);
-    tr.appendChild(tdDay); tr.appendChild(tdCoupons); tr.appendChild(tdTotal); tr.appendChild(tdNet);
-    tbody.appendChild(tr);
-  });
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-
-  const dayNote = document.createElement('div');
-  dayNote.className = 'sub'; dayNote.style.margin = '10px 0 16px';
-  dayNote.textContent = `Pour modifier un autre jour, change le sélecteur de jour en haut de la page.`;
-  wrap.appendChild(dayNote);
-
-  function field(labelText, value, keyName, calc, onEdit){
-    const f = document.createElement('div'); f.className='field standalone';
-    f.innerHTML = `<label>${labelText}</label>`;
-    const input = document.createElement('input');
-    input.type='number'; input.className='num' + (calc?' calc':'');
-    input.value = value;
-    input.addEventListener('input', ()=>{
-      store[keyName] = input.value;
-      if(onEdit) onEdit();
-    });
-    f.appendChild(input);
-    return f;
+  if(miscSubView === 'summary'){
+    wrap.appendChild(buildPokerSummaryView());
+    return wrap;
   }
 
-  wrap.appendChild(field("Argent (cash dans la caisse, séparé du guichet)", store.argent, "argent"));
-  wrap.appendChild(field("Machine (tickets trouvés dans les machines)", store.machine, "machine"));
-  wrap.appendChild(field("Guichet (argent déposé au guichet, provenant des machines)", store.guichet, "guichet"));
+  const subDiv = document.createElement('div');
+  subDiv.className = 'sub';
+  subDiv.textContent = `${state.day} — ${weekSelect.options[weekSelect.selectedIndex].textContent}.`;
+  wrap.appendChild(subDiv);
+
+  // Keeps the existing scalar total/net/coupons fields in sync as the sum of the new
+  // breakdown — every downstream report (#1, #2, #6, the AI tools) already reads those
+  // scalar fields, so nothing else in the app needs to change to understand this.
+  function recalcSums(){
+    store.total = round2(store.machineTotals.reduce((s,v)=>s+(Number(v)||0), 0));
+    store.net = round2(store.machineNets.reduce((s,v)=>s+(Number(v)||0), 0));
+    store.coupons = round2(store.couponList.reduce((s,v)=>s+(Number(v)||0), 0));
+  }
+
+  function buildMachineGrid(label, storeKey){
+    const heading = document.createElement('div');
+    heading.className = 'sub'; heading.style.fontWeight = '600'; heading.style.marginTop = '18px';
+    heading.textContent = `${label} — par machine`;
+    wrap.appendChild(heading);
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; max-width:480px;';
+    const sumLine = document.createElement('div');
+    sumLine.className = 'sub'; sumLine.style.marginTop = '4px';
+    for(let i=0;i<5;i++){
+      const input = document.createElement('input');
+      input.type='number'; input.className='num'; input.value = store[storeKey][i];
+      input.placeholder = `#${i+1}`;
+      input.addEventListener('input', ()=>{
+        store[storeKey][i] = input.value;
+        recalcSums();
+        sumLine.textContent = `Total : ${storeKey==='machineTotals' ? store.total : store.net}`;
+      });
+      grid.appendChild(input);
+    }
+    wrap.appendChild(grid);
+    sumLine.textContent = `Total : ${storeKey==='machineTotals' ? store.total : store.net}`;
+    wrap.appendChild(sumLine);
+  }
+
+  buildMachineGrid('Total inséré', 'machineTotals');
+  buildMachineGrid('Net', 'machineNets');
+
+  // Coupons/Win — an open-ended list of individual coupon values, since a "win" could be
+  // one coupon worth 34, or ten small ones — add as many as actually came in that day.
+  const couponsHeading = document.createElement('div');
+  couponsHeading.className = 'sub'; couponsHeading.style.fontWeight = '600'; couponsHeading.style.marginTop = '20px';
+  couponsHeading.textContent = 'Coupons/Win';
+  wrap.appendChild(couponsHeading);
+  const couponsList = document.createElement('div');
+  wrap.appendChild(couponsList);
+  const couponsSumLine = document.createElement('div');
+  couponsSumLine.className = 'sub'; couponsSumLine.style.marginTop = '4px';
+  wrap.appendChild(couponsSumLine);
+
+  function renderCoupons(){
+    couponsList.innerHTML = '';
+    store.couponList.forEach((val, i)=>{
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:6px;';
+      const input = document.createElement('input');
+      input.type='number'; input.className='num'; input.value = val;
+      input.addEventListener('input', ()=>{ store.couponList[i] = input.value; recalcSums(); couponsSumLine.textContent = `Total : ${store.coupons}`; });
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'print-btn'; removeBtn.textContent = '×'; removeBtn.style.padding = '4px 12px';
+      removeBtn.addEventListener('click', ()=>{ store.couponList.splice(i,1); recalcSums(); renderCoupons(); });
+      row.appendChild(input); row.appendChild(removeBtn);
+      couponsList.appendChild(row);
+    });
+    couponsSumLine.textContent = `Total : ${store.coupons}`;
+  }
+  renderCoupons();
+  const addCouponBtn = document.createElement('button');
+  addCouponBtn.className = 'print-btn no-print'; addCouponBtn.style.marginTop = '6px';
+  addCouponBtn.textContent = '+ Ajouter un coupon';
+  addCouponBtn.addEventListener('click', ()=>{ store.couponList.push(""); renderCoupons(); });
+  wrap.appendChild(addCouponBtn);
+
+  // Machine / Guichet / Argent — same "see the whole week, only today editable" pattern
+  // as before, now shown as its own small table per field instead of plain single inputs.
+  function buildDailyFieldTable(fieldKey, label, showTotal, note){
+    const heading = document.createElement('div');
+    heading.className = 'sub'; heading.style.fontWeight = '600'; heading.style.marginTop = '22px';
+    heading.textContent = label;
+    wrap.appendChild(heading);
+    if(note){
+      const noteDiv = document.createElement('div');
+      noteDiv.className = 'sub'; noteDiv.style.marginBottom = '4px';
+      noteDiv.textContent = note;
+      wrap.appendChild(noteDiv);
+    }
+    const table = document.createElement('table');
+    table.className = 'form-table'; table.style.maxWidth = '300px';
+    table.innerHTML = `<thead><tr><th>Jour</th><th>${label}</th></tr></thead>`;
+    const tbody = document.createElement('tbody');
+    let total = 0;
+    dayNames.forEach(d=>{
+      const dayBucket = bucketFor(state.week, d);
+      if(!dayBucket.misc) dayBucket.misc = {};
+      const dStore = dayBucket.misc;
+      if(dStore[fieldKey] === undefined) dStore[fieldKey] = "";
+      const isActive = d === state.day;
+      const tr = document.createElement('tr');
+      if(!isActive) tr.style.opacity = '0.4';
+      const tdDay = document.createElement('td'); tdDay.textContent = d;
+      if(isActive) tdDay.style.fontWeight = '700';
+      const tdVal = document.createElement('td');
+      const input = document.createElement('input');
+      input.type='number'; input.className='num'; input.value = dStore[fieldKey];
+      input.disabled = !isActive;
+      input.addEventListener('input', ()=>{ dStore[fieldKey] = input.value; });
+      tdVal.appendChild(input);
+      tr.appendChild(tdDay); tr.appendChild(tdVal);
+      tbody.appendChild(tr);
+      total += Number(dStore[fieldKey])||0;
+    });
+    table.appendChild(tbody);
+    if(showTotal){
+      const tfoot = document.createElement('tfoot');
+      tfoot.innerHTML = `<tr><td style="font-weight:700;">Total</td><td style="font-weight:700;">${round2(total)}</td></tr>`;
+      table.appendChild(tfoot);
+    }
+    wrap.appendChild(table);
+  }
+
+  buildDailyFieldTable('machine', 'Machine (tickets trouvés dans les machines)', true);
+  buildDailyFieldTable('guichet', 'Guichet (argent déposé au guichet)', true);
+  buildDailyFieldTable('argent', 'Argent (note comptable)', false,
+    "Ce n'est pas cumulatif — c'est une note que tu ajustes au fil de la semaine. Le chiffre du dimanche est celui qui compte pour la semaine.");
 
   const sun = weekBucket(state.week);
   if(sun.depot === undefined) sun.depot = "";
-  const depotField = document.createElement('div'); depotField.className='field standalone';
+  const depotField = document.createElement('div'); depotField.className='field standalone'; depotField.style.marginTop = '18px';
   depotField.innerHTML = `<label>Depot (hebdomadaire — entré le dimanche)</label>`;
   const depotInput = document.createElement('input');
   depotInput.type='number'; depotInput.className='num'; depotInput.value = sun.depot;
@@ -2873,6 +3012,36 @@ function buildMiscPanel(){
   wrap.appendChild(depotField);
 
   wrap.appendChild(buildBottomBar());
+  return wrap;
+}
+
+function buildPokerSummaryView(){
+  const wrap = document.createElement('div');
+  const subDiv = document.createElement('div');
+  subDiv.className = 'sub';
+  subDiv.textContent = `${weekSelect.options[weekSelect.selectedIndex].textContent}. Vue seulement — pour modifier, utilise "Détails du jour".`;
+  wrap.appendChild(subDiv);
+
+  const table = document.createElement('table');
+  table.className = 'form-table';
+  table.innerHTML = `<thead><tr><th>Jour</th><th>Coupons/Win</th><th>Total inséré</th><th>Net</th></tr></thead>`;
+  const tbody = document.createElement('tbody');
+  dayNames.forEach(d=>{
+    const dayBucket = bucketFor(state.week, d);
+    const dStore = dayBucket.misc || {};
+    const isActive = d === state.day;
+    const tr = document.createElement('tr');
+    if(!isActive) tr.style.opacity = '0.4';
+    const tdDay = document.createElement('td'); tdDay.textContent = d;
+    if(isActive) tdDay.style.fontWeight = '700';
+    const tdCoupons = document.createElement('td'); tdCoupons.textContent = dStore.coupons || 0;
+    const tdTotal = document.createElement('td'); tdTotal.textContent = dStore.total || 0;
+    const tdNet = document.createElement('td'); tdNet.textContent = dStore.net || 0;
+    tr.appendChild(tdDay); tr.appendChild(tdCoupons); tr.appendChild(tdTotal); tr.appendChild(tdNet);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
   return wrap;
 }
 
@@ -4927,7 +5096,10 @@ function pokerRowToStore(row){
   return {
     coupons: row.coupons ?? "", argent: row.argent ?? "",
     total: row.total ?? "", machine: row.machine ?? "", guichet: row.guichet ?? "",
-    net: row.net ?? ""
+    net: row.net ?? "",
+    machineTotals: (row.machine_totals && row.machine_totals.length) ? row.machine_totals : ["","","","",""],
+    machineNets: (row.machine_nets && row.machine_nets.length) ? row.machine_nets : ["","","","",""],
+    couponList: row.coupon_list || []
   };
 }
 function storeToWeekSettingsRow(weekKey, sun){
@@ -5009,11 +5181,14 @@ async function syncWeekToSupabase(weekKey){
     ['bartDay','bartNight'].forEach(st=>{
       if(bucket[st]) shiftRows.push(storeToShiftRow(weekKey, d, st, bucket[st]));
     });
-    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net})=>({
+    if(bucket.misc) pokerRows.push({ week_key: weekKey, day: d, ...(({coupons,argent,total,machine,guichet,net,machineTotals,machineNets,couponList})=>({
       coupons: safeNum(coupons), argent: safeNum(argent),
       total: safeNum(total), machine: safeNum(machine),
       guichet: safeNum(guichet),
-      net: safeNum(net)
+      net: safeNum(net),
+      machine_totals: (machineTotals||[]).map(v=>safeNum(v)),
+      machine_nets: (machineNets||[]).map(v=>safeNum(v)),
+      coupon_list: (couponList||[]).map(v=>safeNum(v))
     }))(bucket.misc) });
     if(bucket.inventaire) invRows.push({ week_key: weekKey, day: d, items: bucket.inventaire });
     if(bucket.delivery) delRows.push({ week_key: weekKey, day: d, items: bucket.delivery });
