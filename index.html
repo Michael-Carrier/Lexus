@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.888</title>
+<title>Registre du bar v 2.889</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -532,24 +532,31 @@
     33% { box-shadow: 0 0 14px 4px #C98BD9, 0 2px 8px rgba(0,0,0,0.2); background: #C98BD9; }
     66% { box-shadow: 0 0 14px 4px #9AB6D9, 0 2px 8px rgba(0,0,0,0.2); background: #9AB6D9; }
   }
-  #simpleFloatHost button.primary.glow-save{
+  #simpleSaveBtn.glow-save{
     animation: saveGlow 1.6s ease-in-out infinite;
   }
   #simpleKeypadHost{
     position:fixed; bottom:0; left:0; right:0; z-index:600; display:none;
     background:var(--paper); border-top:2px solid var(--ink);
-    padding:12px; box-shadow:0 -3px 14px rgba(0,0,0,0.2);
+    padding:10px; box-shadow:0 -3px 14px rgba(0,0,0,0.2);
+  }
+  #simpleKeypadHost .keypad-row{
+    display:flex; gap:14px; align-items:center; justify-content:center;
+    max-width:520px; margin:0 auto; font-family:"Avenir Next","Segoe UI",sans-serif;
   }
   #simpleKeypadHost .keypad-grid{
-    display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;
-    max-width:340px; margin:0 auto; font-family:"Avenir Next","Segoe UI",sans-serif;
+    display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; max-width:280px; flex:1;
+  }
+  #simpleKeypadHost .keypad-btn-col{
+    display:flex; flex-direction:column; gap:6px; width:110px;
   }
   #simpleKeypadHost button{
-    padding:16px; font-size:1.4rem; font-weight:700; border-radius:6px; border:none; cursor:pointer;
+    padding:11px; font-size:1.15rem; font-weight:700; border-radius:6px; border:none; cursor:pointer;
   }
+  #simpleKeypadHost .keypad-btn-col button{ padding:10px; font-size:0.95rem; }
   #simpleKeypadHost button.digit{ background:var(--input-bg); border:1px solid var(--ink); color:var(--ink); }
   #simpleKeypadHost button.erase{ background:#B0402A; color:#fff; }
-  #simpleKeypadHost button.enter{ background:var(--ok); color:#fff; grid-column: span 3; font-size:1.1rem; }
+  #simpleKeypadHost button.enter{ background:var(--ok); color:#fff; grid-column: span 3; font-size:0.95rem; }
   #askAiBox{
     max-width:900px;
     margin:16px auto 0;
@@ -632,7 +639,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.3</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.4</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1269,6 +1276,7 @@ if(!simpleFloatHost){
   document.body.appendChild(simpleFloatHost);
 }
 let currentSimpleSaveHandler = null; // lets Back/Home actually invoke the active save when needed
+let currentSimpleUpDown = null; // { onUp, onDown, upDisabled, downDisabled } — read by the keypad's merged button column
 
 // Custom on-screen numeric keypad — replaces the device's own keyboard entirely for
 // carousel fields, since the native one covers the floating buttons on a phone/tablet.
@@ -1281,6 +1289,11 @@ if(!simpleKeypadHost){
 }
 function showCustomKeypad(onDigit, onErase, onEnter, onToggleSign){
   simpleKeypadHost.innerHTML = '';
+  hideSimpleFloatButtons(); // the button column below replaces the standalone corner box entirely
+
+  const row = document.createElement('div');
+  row.className = 'keypad-row';
+
   const grid = document.createElement('div');
   grid.className = 'keypad-grid';
   for(let d=1; d<=9; d++){
@@ -1305,13 +1318,43 @@ function showCustomKeypad(onDigit, onErase, onEnter, onToggleSign){
   enterBtn.className = 'enter'; enterBtn.textContent = '↵ Entrée — suivant';
   enterBtn.addEventListener('click', onEnter);
   grid.appendChild(enterBtn);
-  simpleKeypadHost.appendChild(grid);
+  row.appendChild(grid);
+
+  // Right-hand column — the same Top/Up/Down/Enregistrer controls that would otherwise
+  // float separately, moved in here since there's plenty of room on this bar already.
+  const btnCol = document.createElement('div');
+  btnCol.className = 'keypad-btn-col';
+  const topBtn = document.createElement('button');
+  topBtn.className = 'print-btn'; topBtn.textContent = '⬆ Top';
+  topBtn.addEventListener('click', ()=> window.scrollTo({top:0, behavior:'smooth'}));
+  btnCol.appendChild(topBtn);
+  if(currentSimpleUpDown){
+    const upBtn = document.createElement('button');
+    upBtn.className = 'primary'; upBtn.textContent = '▲';
+    upBtn.disabled = !!currentSimpleUpDown.upDisabled;
+    upBtn.addEventListener('click', currentSimpleUpDown.onUp);
+    btnCol.appendChild(upBtn);
+    const downBtn = document.createElement('button');
+    downBtn.className = 'primary'; downBtn.textContent = '▼';
+    downBtn.disabled = !!currentSimpleUpDown.downDisabled;
+    downBtn.addEventListener('click', currentSimpleUpDown.onDown);
+    btnCol.appendChild(downBtn);
+  }
+  if(currentSimpleSaveHandler){
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'primary'; saveBtn.id = 'simpleSaveBtn';
+    saveBtn.textContent = 'Enregistrer';
+    saveBtn.addEventListener('click', currentSimpleSaveHandler);
+    btnCol.appendChild(saveBtn);
+  }
+  row.appendChild(btnCol);
+
+  simpleKeypadHost.appendChild(row);
   simpleKeypadHost.style.display = 'block';
-  simpleFloatHost.style.bottom = '270px'; // clears the keypad instead of overlapping it
+  updateSimpleSaveButtonState();
 }
 function hideCustomKeypad(){
   simpleKeypadHost.style.display = 'none';
-  simpleFloatHost.style.bottom = '20px';
 }
 
 function showSimpleFloatButtons(onSave, upDown){
@@ -1569,18 +1612,22 @@ function renderSimpleUI(){
     // buildStockSection alone has no save button of its own (that normally comes from
     // buildShiftPanel) — the floating button drives the same shared save function directly.
     const nav = getCarouselNav(currentNode);
-    showSimpleFloatButtons(async ()=>{
+    // The keypad's merged button column renders Top/Up/Down/Enregistrer once a field
+    // gets focus — these are read from the module-level vars it looks at, rather than
+    // a separate standalone floating box (which would just be redundant here).
+    currentSimpleSaveHandler = async ()=>{
       await saveData({ set textContent(v){} });
       simpleModeDirty = false;
       updateSimpleSaveButtonState();
       const summary = buildCarouselSaveSummary(currentNode);
       if(summary) showSaveToast(`✓ ${summary}`, false);
-    }, nav ? {
+    };
+    currentSimpleUpDown = nav ? {
       onUp: ()=> nav.onChange(nav.current-1),
       onDown: ()=> nav.onChange(nav.current+1),
       upDisabled: nav.current === 0,
       downDisabled: nav.current === nav.total-1
-    } : null);
+    } : null;
   } else if(currentNode && currentNode.tab){
     state.tab = currentNode.tab;
     panelHost.style.display = 'block';
@@ -3507,38 +3554,48 @@ function buildStockSection(shiftType, bucket, options){
   headingRow.className = 'no-print';
   headingRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
   const canSeeNext = state.role === 'boss'; // only Boss can navigate to a neighbouring form — others just see the preview number
-  const leftNavBtn = document.createElement('button');
-  leftNavBtn.className = 'print-btn';
-  leftNavBtn.textContent = isDay ? "← Inventaire d'hier" : "← Quart de Jour";
-  leftNavBtn.addEventListener('click', ()=>{
-    if(isDay){
-      state.week = prevRef.weekKey; state.day = prevRef.day; state.tab = 'inventaire';
-      weekSelect.value = prevRef.weekKey;
-      renderDayButtons(); renderTabs();
-      loadWeekFromSupabase(prevRef.weekKey).then(renderPanel);
-    } else {
-      state.tab = 'bartDay'; renderTabs(); renderPanel();
-    }
-  });
-  const h = document.createElement('h2');
-  h.textContent = 'Stock du quart';
-  h.style.cssText = 'font-size:1.1rem; margin:0;';
-  const rightNavBtn = document.createElement('button');
-  rightNavBtn.className = 'print-btn';
-  rightNavBtn.textContent = isDay ? "Quart de Soir →" : "Inventaire →";
-  rightNavBtn.addEventListener('click', ()=>{
-    state.tab = isDay ? 'bartNight' : 'inventaire';
-    renderTabs(); renderPanel();
-  });
-  if(canSeeNext) headingRow.appendChild(leftNavBtn);
-  headingRow.appendChild(h);
-  if(canSeeNext) headingRow.appendChild(rightNavBtn);
-  section.appendChild(headingRow);
+  // The heading (with its Normal-Mode-only cross-navigation to the next shift) is
+  // redundant in Simple Mode's carousel — the breadcrumb and Back/Up/Down already
+  // cover that context there.
+  if(!carousel && !futCarousel){
+    const leftNavBtn = document.createElement('button');
+    leftNavBtn.className = 'print-btn';
+    leftNavBtn.textContent = isDay ? "← Inventaire d'hier" : "← Quart de Jour";
+    leftNavBtn.addEventListener('click', ()=>{
+      if(isDay){
+        state.week = prevRef.weekKey; state.day = prevRef.day; state.tab = 'inventaire';
+        weekSelect.value = prevRef.weekKey;
+        renderDayButtons(); renderTabs();
+        loadWeekFromSupabase(prevRef.weekKey).then(renderPanel);
+      } else {
+        state.tab = 'bartDay'; renderTabs(); renderPanel();
+      }
+    });
+    const h = document.createElement('h2');
+    h.textContent = 'Stock du quart';
+    h.style.cssText = 'font-size:1.1rem; margin:0;';
+    const rightNavBtn = document.createElement('button');
+    rightNavBtn.className = 'print-btn';
+    rightNavBtn.textContent = isDay ? "Quart de Soir →" : "Inventaire →";
+    rightNavBtn.addEventListener('click', ()=>{
+      state.tab = isDay ? 'bartNight' : 'inventaire';
+      renderTabs(); renderPanel();
+    });
+    if(canSeeNext) headingRow.appendChild(leftNavBtn);
+    headingRow.appendChild(h);
+    if(canSeeNext) headingRow.appendChild(rightNavBtn);
+    section.appendChild(headingRow);
+  }
 
-  const sub = document.createElement('div');
-  sub.className = 'sub';
-  sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
-  section.appendChild(sub);
+  // This description explains the full table's columns — genuinely useful in Normal
+  // Mode, but redundant clutter in Simple Mode's carousel, which shows one item at a
+  // time and doesn't need the column semantics spelled out.
+  if(!carousel && !futCarousel){
+    const sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
+    section.appendChild(sub);
+  }
 
   // numOrZero is now a global function (see near roundInt) — empty/missing = 0.
 
