@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.887</title>
+<title>Registre du bar v 2.888</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -535,6 +535,21 @@
   #simpleFloatHost button.primary.glow-save{
     animation: saveGlow 1.6s ease-in-out infinite;
   }
+  #simpleKeypadHost{
+    position:fixed; bottom:0; left:0; right:0; z-index:600; display:none;
+    background:var(--paper); border-top:2px solid var(--ink);
+    padding:12px; box-shadow:0 -3px 14px rgba(0,0,0,0.2);
+  }
+  #simpleKeypadHost .keypad-grid{
+    display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;
+    max-width:340px; margin:0 auto; font-family:"Avenir Next","Segoe UI",sans-serif;
+  }
+  #simpleKeypadHost button{
+    padding:16px; font-size:1.4rem; font-weight:700; border-radius:6px; border:none; cursor:pointer;
+  }
+  #simpleKeypadHost button.digit{ background:var(--input-bg); border:1px solid var(--ink); color:var(--ink); }
+  #simpleKeypadHost button.erase{ background:#B0402A; color:#fff; }
+  #simpleKeypadHost button.enter{ background:var(--ok); color:#fff; grid-column: span 3; font-size:1.1rem; }
   #askAiBox{
     max-width:900px;
     margin:16px auto 0;
@@ -617,7 +632,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.2</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.3</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -999,12 +1014,25 @@ function setupSimpleCarousel(rows, currentIdx, onIndexChange){
     if(inputs[fieldIdx]) inputs[fieldIdx].focus();
   }
   // Land on the same column the user was using before (Début stays Début when moving
-  // to the next beer, etc.) — keeps the on-screen keyboard open on a tablet/phone
-  // instead of it closing and reopening between every item.
+  // to the next beer, etc.) — keeps the custom keypad open on a tablet/phone instead
+  // of it closing and reopening between every item.
   setTimeout(focusField, 0);
   if(currentTr){
     Array.from(currentTr.querySelectorAll('input')).forEach((inp, i)=>{
-      inp.addEventListener('focus', ()=>{ fieldIdx = i; lastCarouselFieldIdx = i; });
+      // readonly blocks the device's own keyboard from popping up at all (more reliable
+      // across browsers than inputmode alone for type="number") — the custom keypad
+      // below is the only way to actually change the value.
+      inp.setAttribute('readonly', '');
+      inp.setAttribute('inputmode', 'none');
+      inp.addEventListener('focus', ()=>{
+        fieldIdx = i; lastCarouselFieldIdx = i;
+        showCustomKeypad(
+          (digit)=>{ inp.value = (inp.value===""?"":inp.value) + digit; inp.dispatchEvent(new Event('input', {bubbles:true})); },
+          ()=>{ inp.value = String(inp.value||'').slice(0,-1); inp.dispatchEvent(new Event('input', {bubbles:true})); },
+          ()=>{ lastCarouselFieldIdx = fieldIdx; onIndexChange(currentIdx+1); },
+          ()=>{ inp.value = String(-(Number(inp.value)||0)); inp.dispatchEvent(new Event('input', {bubbles:true})); }
+        );
+      });
     });
   }
 
@@ -1242,6 +1270,50 @@ if(!simpleFloatHost){
 }
 let currentSimpleSaveHandler = null; // lets Back/Home actually invoke the active save when needed
 
+// Custom on-screen numeric keypad — replaces the device's own keyboard entirely for
+// carousel fields, since the native one covers the floating buttons on a phone/tablet.
+// Digits append, Effacer removes the last character, Entrée confirms and moves down.
+let simpleKeypadHost = document.getElementById('simpleKeypadHost');
+if(!simpleKeypadHost){
+  simpleKeypadHost = document.createElement('div');
+  simpleKeypadHost.id = 'simpleKeypadHost';
+  document.body.appendChild(simpleKeypadHost);
+}
+function showCustomKeypad(onDigit, onErase, onEnter, onToggleSign){
+  simpleKeypadHost.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'keypad-grid';
+  for(let d=1; d<=9; d++){
+    const btn = document.createElement('button');
+    btn.className = 'digit'; btn.textContent = d;
+    btn.addEventListener('click', ()=> onDigit(String(d)));
+    grid.appendChild(btn);
+  }
+  const eraseBtn = document.createElement('button');
+  eraseBtn.className = 'erase'; eraseBtn.textContent = '⌫';
+  eraseBtn.addEventListener('click', onErase);
+  grid.appendChild(eraseBtn);
+  const zeroBtn = document.createElement('button');
+  zeroBtn.className = 'digit'; zeroBtn.textContent = '0';
+  zeroBtn.addEventListener('click', ()=> onDigit('0'));
+  grid.appendChild(zeroBtn);
+  const signBtn = document.createElement('button');
+  signBtn.className = 'digit'; signBtn.textContent = '+/−';
+  signBtn.addEventListener('click', onToggleSign);
+  grid.appendChild(signBtn);
+  const enterBtn = document.createElement('button');
+  enterBtn.className = 'enter'; enterBtn.textContent = '↵ Entrée — suivant';
+  enterBtn.addEventListener('click', onEnter);
+  grid.appendChild(enterBtn);
+  simpleKeypadHost.appendChild(grid);
+  simpleKeypadHost.style.display = 'block';
+  simpleFloatHost.style.bottom = '270px'; // clears the keypad instead of overlapping it
+}
+function hideCustomKeypad(){
+  simpleKeypadHost.style.display = 'none';
+  simpleFloatHost.style.bottom = '20px';
+}
+
 function showSimpleFloatButtons(onSave, upDown){
   // upDown = { onUp, onDown, upDisabled, downDisabled } — only passed on carousel pages.
   currentSimpleSaveHandler = onSave || null;
@@ -1277,7 +1349,7 @@ function showSimpleFloatButtons(onSave, upDown){
   rightCol.appendChild(topBtn);
   if(onSave){
     const saveBtn = document.createElement('button');
-    saveBtn.className = 'primary';
+    saveBtn.className = 'primary'; saveBtn.id = 'simpleSaveBtn';
     saveBtn.textContent = 'Enregistrer';
     saveBtn.style.cssText += 'padding:14px 22px; font-size:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
     saveBtn.addEventListener('click', onSave);
@@ -1289,7 +1361,7 @@ function showSimpleFloatButtons(onSave, upDown){
 // Greyed out and inert until something's actually been typed — then it glows and cycles
 // color so it's impossible to miss there's something waiting to be saved.
 function updateSimpleSaveButtonState(){
-  const saveBtn = simpleFloatHost.querySelector('button.primary');
+  const saveBtn = document.getElementById('simpleSaveBtn');
   if(!saveBtn) return;
   saveBtn.disabled = !simpleModeDirty;
   saveBtn.classList.toggle('glow-save', simpleModeDirty);
@@ -1361,6 +1433,7 @@ function renderSimpleUI(){
   document.body.appendChild(document.getElementById('askAiBox'));
   simpleModeHost.innerHTML = '';
   hideSimpleFloatButtons();
+  hideCustomKeypad();
   // Only one carousel's keyboard listener should ever be live — clear it here so
   // navigating away from the beers view (Back, or a different leaf) doesn't leave a
   // stale one still responding to arrow keys.
@@ -1586,6 +1659,8 @@ function renderTabs(){
   tabBar.style.display = '';
   simpleModeHost.style.display = 'none';
   simpleBackBtn.style.display = 'none';
+  hideSimpleFloatButtons();
+  hideCustomKeypad();
   document.getElementById('prefsBtn').style.display = '';
   document.getElementById('commentsBtn').style.display = 'block';
   // (panelHost itself gets shown again when leaving Simple Mode via setSimpleMode(),
