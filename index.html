@@ -782,7 +782,7 @@ const pdfSheetList = [
 // Supabase client itself is ready (see loadScheduleFromSupabase() call below).
 let staffSchedule = { A:{}, B:{} };
 const dayNameToEn = {Lundi:"Monday", Mardi:"Tuesday", Mercredi:"Wednesday", Jeudi:"Thursday", Vendredi:"Friday", Samedi:"Saturday", Dimanche:"Sunday"};
-const bartenders = ["Claudine","Jen","Maude","Steph","Tanya","Val"];
+const bartenders = ["Claudine","Anais","Maude","Steph","Tanya","Val"];
 
 async function loadScheduleFromSupabase(){
   try{
@@ -2294,8 +2294,8 @@ function buildOverallSheet(){
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
   const sun = weekBucket(state.week);
-  const staffList = ['Val','Tanya','Maude','Jen','Stephanie','Claudine','Schneider'];
-  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jen', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
+  const staffList = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','Schneider'];
+  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
@@ -2624,8 +2624,8 @@ function buildShiftSummarySheet(){
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
-  const staffColumns = ['Val','Tanya','Maude','Jennifer','Stephanie','Claudine','ME'];
-  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jennifer', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
+  const staffColumns = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','ME'];
+  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
 
   const dayRows = [
     {day:'Lundi',    label:'Lundi',    header:4,  entree:5,  sortie:6 },
