@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.886</title>
+<title>Registre du bar v 2.887</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -243,6 +243,7 @@
     cursor:pointer;
   }
   button.primary:hover{ background:var(--copper-deep); }
+  button.primary:disabled{ background:var(--off); color:#8a8a8a; cursor:not-allowed; opacity:0.7; }
   .status{ font-size:0.8rem; color:var(--ink-soft); }
 
   .stub{
@@ -526,6 +527,14 @@
   .notif-item .notif-when{ color:var(--ink-soft); font-size:0.78rem; }
   .notif-empty{ padding:14px; font-size:0.85rem; color:var(--ink-soft); }
 
+  @keyframes saveGlow{
+    0%, 100% { box-shadow: 0 0 8px 2px #4F7A3B, 0 2px 8px rgba(0,0,0,0.2); background: #4F7A3B; }
+    33% { box-shadow: 0 0 14px 4px #C98BD9, 0 2px 8px rgba(0,0,0,0.2); background: #C98BD9; }
+    66% { box-shadow: 0 0 14px 4px #9AB6D9, 0 2px 8px rgba(0,0,0,0.2); background: #9AB6D9; }
+  }
+  #simpleFloatHost button.primary.glow-save{
+    animation: saveGlow 1.6s ease-in-out infinite;
+  }
   #askAiBox{
     max-width:900px;
     margin:16px auto 0;
@@ -608,7 +617,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v6.9</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.2</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1052,7 +1061,9 @@ const simpleTreeBoss = {
   stock: { label: 'Stock du Quart', emoji: '📋', color: '#2E4A5E', children: {
     ...stockDayNightChildren(),
     inventaire: { label: 'Inventaire Journalier', emoji: '📋', color: '#6E4520', simple: 'inventaire' }
-  }}
+  }},
+  commentaires: { label: 'Commentaires', emoji: '💬', color: '#A566B8', tab: 'comments' },
+  prefs: { label: 'Préférences', emoji: '⚙️', color: '#6B6259', action: 'prefs' }
 };
 
 // Barmaid gets exactly the same four things she has in Normal Mode — nothing boss-only,
@@ -1061,7 +1072,9 @@ const simpleTreeBarmaid = {
   stock: { label: 'Stock du Quart', emoji: '📋', color: '#2E4A5E', children: stockDayNightChildren() },
   commander: { label: 'Commander', emoji: '🍹', color: '#B0402A', tab: 'commander' },
   bills: { label: 'Bills', emoji: '📒', color: '#4F7A3B', tab: 'bills' },
-  bottles: { label: 'Bottles', emoji: '🍾', color: '#8C5A2B', tab: 'bottles' }
+  bottles: { label: 'Bottles', emoji: '🍾', color: '#8C5A2B', tab: 'bottles' },
+  commentaires: { label: 'Commentaires', emoji: '💬', color: '#A566B8', tab: 'comments' },
+  prefs: { label: 'Préférences', emoji: '⚙️', color: '#6B6259', action: 'prefs' }
 };
 
 function getSimpleTree(){
@@ -1074,27 +1087,45 @@ let simpleNonBeerIndex = { bartDay: 0, bartNight: 0 };
 let simpleFutIndex = { bartDay: 0, bartNight: 0 };
 let simpleInventaireIndex = 0;
 
+// Shared by the carousel's internal Up/Down handling and the floating Up/Down buttons,
+// so both always agree on the current position, the total count, and how to move.
+function getCarouselNav(node){
+  if(node.simple === 'beers' || node.simple === 'nonBeers'){
+    const indices = node.simple === 'beers' ? BEER_INDICES : NONBEER_INDICES;
+    const posMap = node.simple === 'beers' ? simpleBeerIndex : simpleNonBeerIndex;
+    const current = posMap[node.shiftType] || 0;
+    return { current, total: indices.length, onChange: (i)=>{ posMap[node.shiftType] = i; renderSimpleUI(); } };
+  }
+  if(node.simple === 'fut'){
+    const current = simpleFutIndex[node.shiftType] || 0;
+    return { current, total: futTaps.length * futPours.length, onChange: (i)=>{ simpleFutIndex[node.shiftType] = i; renderSimpleUI(); } };
+  }
+  if(node.simple === 'inventaire'){
+    const total = inventaireItems.filter(it=>!it.spacer).length;
+    return { current: simpleInventaireIndex || 0, total, onChange: (i)=>{ simpleInventaireIndex = i; renderSimpleUI(); } };
+  }
+  return null;
+}
+
 function buildSimpleStockLeaf(node){
   const bucket = ensureBucket();
+  const nav = getCarouselNav(node);
   if(node.simple === 'beers'){
-    const idx = simpleBeerIndex[node.shiftType] || 0;
     return buildStockSection(node.shiftType, bucket, {
       itemFilter: BEER_INDICES, hideFut: true,
-      carousel: { index: idx, onChange: (newIdx)=>{ simpleBeerIndex[node.shiftType] = newIdx; renderSimpleUI(); } }
+      carousel: { index: nav.current, onChange: nav.onChange }
     });
   }
   if(node.simple === 'nonBeers'){
-    const idx = simpleNonBeerIndex[node.shiftType] || 0;
     return buildStockSection(node.shiftType, bucket, {
       itemFilter: NONBEER_INDICES, hideFut: true,
-      carousel: { index: idx, onChange: (newIdx)=>{ simpleNonBeerIndex[node.shiftType] = newIdx; renderSimpleUI(); } }
+      carousel: { index: nav.current, onChange: nav.onChange }
     });
   }
   if(node.simple === 'fut'){
-    const idx = simpleFutIndex[node.shiftType] || 0;
     const section = buildStockSection(node.shiftType, bucket, {
       itemFilter: [], hideFut: false,
-      futCarousel: { index: idx, onChange: (newIdx)=>{ simpleFutIndex[node.shiftType] = newIdx; renderSimpleUI(); } }
+      futCarousel: { index: nav.current, onChange: nav.onChange }
     });
     // Hide the (now-empty) bottled-beer heading/description/tables — they're always
     // the first three children, appended before the Fût section either way.
@@ -1102,9 +1133,8 @@ function buildSimpleStockLeaf(node){
     return section;
   }
   if(node.simple === 'inventaire'){
-    const idx = simpleInventaireIndex || 0;
     const section = buildInventairePanel({
-      carousel: { index: idx, onChange: (newIdx)=>{ simpleInventaireIndex = newIdx; renderSimpleUI(); } }
+      carousel: { index: nav.current, onChange: nav.onChange }
     });
     // buildInventairePanel normally includes its own Enregistrer bar — hide it here since
     // the floating button already covers saving, same as the other carousel leaves.
@@ -1212,24 +1242,57 @@ if(!simpleFloatHost){
 }
 let currentSimpleSaveHandler = null; // lets Back/Home actually invoke the active save when needed
 
-function showSimpleFloatButtons(onSave){
+function showSimpleFloatButtons(onSave, upDown){
+  // upDown = { onUp, onDown, upDisabled, downDisabled } — only passed on carousel pages.
   currentSimpleSaveHandler = onSave || null;
   simpleFloatHost.innerHTML = '';
   simpleFloatHost.style.display = 'flex';
+  simpleFloatHost.style.alignItems = 'flex-end';
+  simpleFloatHost.style.gap = '10px';
+
+  if(upDown){
+    const upDownCol = document.createElement('div');
+    upDownCol.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
+    const upBtn = document.createElement('button');
+    upBtn.className = 'primary'; upBtn.textContent = '▲';
+    upBtn.style.cssText = 'padding:14px 20px; font-size:1.1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+    upBtn.disabled = !!upDown.upDisabled;
+    upBtn.addEventListener('click', upDown.onUp);
+    const downBtn = document.createElement('button');
+    downBtn.className = 'primary'; downBtn.textContent = '▼';
+    downBtn.style.cssText = 'padding:14px 20px; font-size:1.1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
+    downBtn.disabled = !!upDown.downDisabled;
+    downBtn.addEventListener('click', upDown.onDown);
+    upDownCol.appendChild(upBtn); upDownCol.appendChild(downBtn);
+    simpleFloatHost.appendChild(upDownCol);
+  }
+
+  const rightCol = document.createElement('div');
+  rightCol.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
   const topBtn = document.createElement('button');
   topBtn.className = 'print-btn';
   topBtn.textContent = '⬆ Top';
   topBtn.style.cssText += 'padding:14px 18px; font-size:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
   topBtn.addEventListener('click', ()=> window.scrollTo({top:0, behavior:'smooth'}));
-  simpleFloatHost.appendChild(topBtn);
+  rightCol.appendChild(topBtn);
   if(onSave){
     const saveBtn = document.createElement('button');
     saveBtn.className = 'primary';
     saveBtn.textContent = 'Enregistrer';
     saveBtn.style.cssText += 'padding:14px 22px; font-size:1rem; box-shadow:0 2px 8px rgba(0,0,0,0.2);';
     saveBtn.addEventListener('click', onSave);
-    simpleFloatHost.appendChild(saveBtn);
+    rightCol.appendChild(saveBtn);
   }
+  simpleFloatHost.appendChild(rightCol);
+  updateSimpleSaveButtonState();
+}
+// Greyed out and inert until something's actually been typed — then it glows and cycles
+// color so it's impossible to miss there's something waiting to be saved.
+function updateSimpleSaveButtonState(){
+  const saveBtn = simpleFloatHost.querySelector('button.primary');
+  if(!saveBtn) return;
+  saveBtn.disabled = !simpleModeDirty;
+  saveBtn.classList.toggle('glow-save', simpleModeDirty);
 }
 function hideSimpleFloatButtons(){ simpleFloatHost.style.display = 'none'; currentSimpleSaveHandler = null; }
 
@@ -1277,13 +1340,20 @@ function buildCarouselSaveSummary(node){
   return null;
 }
 function attachDirtyTracking(container){
-  container.addEventListener('input', ()=>{ simpleModeDirty = true; });
+  container.addEventListener('input', ()=>{
+    simpleModeDirty = true;
+    updateSimpleSaveButtonState();
+  });
 }
 
 function renderSimpleUI(){
   mainUI.style.display = 'none';
   tabBar.style.display = 'none';
   simpleModeHost.style.display = 'block';
+  // Commentaires and Préférences are now big buttons in the main menu — hide their
+  // small header versions here so the top of the screen stays uncluttered.
+  document.getElementById('commentsBtn').style.display = 'none';
+  document.getElementById('prefsBtn').style.display = 'none';
   // askAiBox may have been moved into simpleModeHost by a previous render (see the AI
   // section below) — move it back out to a safe, persistent spot first, since wiping
   // simpleModeHost's innerHTML would otherwise destroy it from the page entirely rather
@@ -1425,12 +1495,19 @@ function renderSimpleUI(){
     attachDirtyTracking(leafWrap);
     // buildStockSection alone has no save button of its own (that normally comes from
     // buildShiftPanel) — the floating button drives the same shared save function directly.
+    const nav = getCarouselNav(currentNode);
     showSimpleFloatButtons(async ()=>{
       await saveData({ set textContent(v){} });
       simpleModeDirty = false;
+      updateSimpleSaveButtonState();
       const summary = buildCarouselSaveSummary(currentNode);
       if(summary) showSaveToast(`✓ ${summary}`, false);
-    });
+    }, nav ? {
+      onUp: ()=> nav.onChange(nav.current-1),
+      onDown: ()=> nav.onChange(nav.current+1),
+      upDisabled: nav.current === 0,
+      downDisabled: nav.current === nav.total-1
+    } : null);
   } else if(currentNode && currentNode.tab){
     state.tab = currentNode.tab;
     panelHost.style.display = 'block';
@@ -1440,6 +1517,7 @@ function renderSimpleUI(){
     showSimpleFloatButtons(async ()=>{
       await saveData(realStatusEl || { set textContent(v){} });
       simpleModeDirty = false;
+      updateSimpleSaveButtonState();
       const summary = buildGenericSaveSummary(panelHost);
       if(summary) showSaveToast(`✓ ${summary}`, false);
     });
@@ -1460,6 +1538,12 @@ function renderSimpleUI(){
     }
     entries.forEach(([key, child])=>{
       const btn = bigButton(child.label, child.color || '#8C5A2B', child.emoji || '▶️', ()=>{
+        if(child.action === 'prefs'){
+          // A modal overlay, not a page — trigger it directly without navigating away
+          // from the current menu, so Back/Home still land where they were.
+          prefsBtn.click();
+          return;
+        }
         simpleNavPath.push(key);
         simpleModeDirty = false;
         renderSimpleUI();
@@ -1502,6 +1586,8 @@ function renderTabs(){
   tabBar.style.display = '';
   simpleModeHost.style.display = 'none';
   simpleBackBtn.style.display = 'none';
+  document.getElementById('prefsBtn').style.display = '';
+  document.getElementById('commentsBtn').style.display = 'block';
   // (panelHost itself gets shown again when leaving Simple Mode via setSimpleMode(),
   // which only ever runs post-login — referencing it here would hit it before its
   // own declaration further down the script, on the very first pre-login call.)
@@ -2672,6 +2758,13 @@ function buildCommentsPanel(){
   backBtn.className = 'print-btn';
   backBtn.textContent = '← Retour';
   backBtn.addEventListener('click', ()=>{
+    if(simpleMode){
+      // Simple Mode navigates via simpleNavPath, not state.tab — popping it back to
+      // empty returns to the main menu, matching what this button visually promises.
+      simpleNavPath = [];
+      renderSimpleUI();
+      return;
+    }
     state.tab = tabBeforeComments || roleTabs[state.role][0];
     tabBeforeComments = null;
     renderTabs(); renderPanel();
@@ -3718,40 +3811,6 @@ function buildStockSection(shiftType, bucket, options){
       const rowPos = Array.from(futBody.children).indexOf(tr);
       tr.style.opacity = (Math.floor(rowPos/(futPours.length+1)) === currentTapIdx) ? '1' : '0.3';
     });
-
-    const labelFor = (flat)=>{
-      const t = Math.floor(flat / futPours.length), p = flat % futPours.length;
-      return `${futTaps[t]} — ${futPours[p]}`;
-    };
-    const navWrap = document.createElement('div');
-    navWrap.style.cssText = 'text-align:center; margin-top:14px;';
-    const prevLabel = document.createElement('div');
-    prevLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-bottom:6px;';
-    prevLabel.textContent = idx > 0 ? `↑ ${labelFor(idx-1)}` : '';
-    const upBtn = document.createElement('button');
-    upBtn.className = 'primary'; upBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    upBtn.textContent = '▲'; upBtn.disabled = idx === 0;
-    const currentLabel = document.createElement('div');
-    currentLabel.style.cssText = 'font-weight:700; font-size:1.3rem; margin:10px 0;';
-    currentLabel.textContent = labelFor(idx);
-    const downBtn = document.createElement('button');
-    downBtn.className = 'primary'; downBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    downBtn.textContent = '▼'; downBtn.disabled = idx === totalFlat-1;
-    const nextLabel = document.createElement('div');
-    nextLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-top:6px;';
-    nextLabel.textContent = idx < totalFlat-1 ? `↓ ${labelFor(idx+1)}` : '';
-
-    function goToFut(newIdx){
-      if(newIdx < 0 || newIdx > totalFlat-1) return;
-      if(futCarousel.onChange) futCarousel.onChange(newIdx);
-    }
-    upBtn.addEventListener('click', ()=> goToFut(idx-1));
-    downBtn.addEventListener('click', ()=> goToFut(idx+1));
-    navWrap.appendChild(prevLabel);
-    const btnRow = document.createElement('div');
-    btnRow.appendChild(upBtn); btnRow.appendChild(downBtn);
-    navWrap.appendChild(currentLabel); navWrap.appendChild(btnRow); navWrap.appendChild(nextLabel);
-    section.insertBefore(navWrap, futTable);
   }
 
   if(isDay && futYesterdayCache.key !== futCacheKey){
@@ -3781,10 +3840,6 @@ function buildStockSection(shiftType, bucket, options){
   // sizing, centering and Up/Down/Left/Right navigation all work.
   if(carousel && itemFilter && itemFilter.length){
     const idx = Math.max(0, Math.min(carousel.index, itemFilter.length-1));
-    const currentItemIdx = itemFilter[idx];
-    const prevItemIdx = idx > 0 ? itemFilter[idx-1] : null;
-    const nextItemIdx = idx < itemFilter.length-1 ? itemFilter[idx+1] : null;
-
     const mainRows = Array.from(section.querySelectorAll('table.stock-align-table'))[1]?.querySelectorAll('tbody tr') || [];
     const tableSets = Array.from(section.querySelectorAll('table.stock-align-table')).map(t=>Array.from(t.querySelectorAll('tbody tr')));
     // setupSimpleCarousel expects one <tr> per item — use the main (input-bearing) table's row.
@@ -3797,41 +3852,6 @@ function buildStockSection(shiftType, bucket, options){
           : 'opacity:0.3; font-size:0.55rem; transition:all 0.15s;';
       });
     });
-
-    const navWrap = document.createElement('div');
-    navWrap.style.cssText = 'text-align:center; margin-top:14px;';
-    const prevLabel = document.createElement('div');
-    prevLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-bottom:6px;';
-    prevLabel.textContent = prevItemIdx !== null ? `↑ ${inventaireItems[prevItemIdx].name}` : '';
-    const upBtn = document.createElement('button');
-    upBtn.className = 'primary'; upBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    upBtn.textContent = '▲';
-    upBtn.disabled = idx === 0;
-    const currentLabel = document.createElement('div');
-    currentLabel.style.cssText = 'font-weight:700; font-size:1.3rem; margin:10px 0;';
-    currentLabel.textContent = inventaireItems[currentItemIdx].name;
-    const downBtn = document.createElement('button');
-    downBtn.className = 'primary'; downBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    downBtn.textContent = '▼';
-    downBtn.disabled = idx === itemFilter.length-1;
-    const nextLabel = document.createElement('div');
-    nextLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-top:6px;';
-    nextLabel.textContent = nextItemIdx !== null ? `↓ ${inventaireItems[nextItemIdx].name}` : '';
-
-    function goTo(newIdx){
-      if(newIdx < 0 || newIdx > itemFilter.length-1) return;
-      if(carousel.onChange) carousel.onChange(newIdx);
-    }
-    upBtn.addEventListener('click', ()=> goTo(idx-1));
-    downBtn.addEventListener('click', ()=> goTo(idx+1));
-
-    navWrap.appendChild(prevLabel);
-    const btnRow = document.createElement('div');
-    btnRow.appendChild(upBtn); btnRow.appendChild(downBtn);
-    navWrap.appendChild(currentLabel);
-    navWrap.appendChild(btnRow);
-    navWrap.appendChild(nextLabel);
-    section.insertBefore(navWrap, section.firstChild.nextSibling);
   }
 
   return section;
@@ -3974,41 +3994,8 @@ function buildInventairePanel(options){
   if(carousel){
     const navigableItemIndices = inventaireItems.map((it,i)=>it.spacer ? null : i).filter(i=>i!==null);
     const idx = Math.max(0, Math.min(carousel.index, navigableItemIndices.length-1));
-    const currentItemIdx = navigableItemIndices[idx];
     const rows = navigableItemIndices.map(i=> tbody.querySelector(`tr[data-item-idx="${i}"]`));
     setupSimpleCarousel(rows, idx, (newIdx)=>{ if(carousel.onChange) carousel.onChange(newIdx); });
-
-    const navWrap = document.createElement('div');
-    navWrap.style.cssText = 'text-align:center; margin-top:14px;';
-    const prevIdx = idx > 0 ? navigableItemIndices[idx-1] : null;
-    const nextIdx = idx < navigableItemIndices.length-1 ? navigableItemIndices[idx+1] : null;
-    const prevLabel = document.createElement('div');
-    prevLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-bottom:6px;';
-    prevLabel.textContent = prevIdx !== null ? `↑ ${inventaireItems[prevIdx].name}` : '';
-    const upBtn = document.createElement('button');
-    upBtn.className = 'primary'; upBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    upBtn.textContent = '▲'; upBtn.disabled = idx === 0;
-    const currentLabel = document.createElement('div');
-    currentLabel.style.cssText = 'font-weight:700; font-size:1.3rem; margin:10px 0;';
-    currentLabel.textContent = inventaireItems[currentItemIdx].name;
-    const downBtn = document.createElement('button');
-    downBtn.className = 'primary'; downBtn.style.cssText = 'padding:14px 40px; font-size:1.1rem; margin:0 8px;';
-    downBtn.textContent = '▼'; downBtn.disabled = idx === navigableItemIndices.length-1;
-    const nextLabel = document.createElement('div');
-    nextLabel.style.cssText = 'color:var(--ink-soft); font-size:0.9rem; margin-top:6px;';
-    nextLabel.textContent = nextIdx !== null ? `↓ ${inventaireItems[nextIdx].name}` : '';
-
-    function goToInv(newIdx){
-      if(newIdx < 0 || newIdx > navigableItemIndices.length-1) return;
-      if(carousel.onChange) carousel.onChange(newIdx);
-    }
-    upBtn.addEventListener('click', ()=> goToInv(idx-1));
-    downBtn.addEventListener('click', ()=> goToInv(idx+1));
-    navWrap.appendChild(prevLabel);
-    const btnRow = document.createElement('div');
-    btnRow.appendChild(upBtn); btnRow.appendChild(downBtn);
-    navWrap.appendChild(currentLabel); navWrap.appendChild(btnRow); navWrap.appendChild(nextLabel);
-    wrap.insertBefore(navWrap, table);
   }
 
   // Third check: does tonight's actual Fin (beers physically left) + what the janitor added
@@ -5461,7 +5448,8 @@ let unreadComments = [];
 let tabBeforeComments = null; // remembered so the Comments page can offer a way back
 
 async function refreshComments(){
-  commentsBtn.style.display = 'block'; // always visible now, for every role
+  // Simple Mode has its own big Commentaires button — keep the small header one hidden there.
+  commentsBtn.style.display = simpleMode ? 'none' : 'block';
   if(state.role !== 'boss'){ commentsBtn.textContent = '💬 Commentaires'; return; }
   try{
     const { data, error } = await sb.from('comments').select('*').eq('is_read', false).order('created_at', {ascending:false});
