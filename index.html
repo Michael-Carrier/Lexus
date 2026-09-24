@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.889</title>
+<title>Registre du bar v 2.890</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -383,6 +383,7 @@
   .pg-header{ font-weight:600; border:none; background:transparent; color:var(--ink-soft); }
   .pg-calc{ background:var(--blue-fill); color:var(--ink); font-variant-numeric:tabular-nums; }
   .pg-unknown{ background:#F2A65A; color:#3A2A12; font-weight:600; }
+  .pg-assumed{ background:#F2D93A; color:#3A2A12; font-weight:600; cursor:help; }
   .pg-day{ font-weight:700; color:var(--ink); border:none; background:transparent; }
 
   .print-btn{
@@ -473,6 +474,7 @@
     background:var(--input-bg); border:1px solid var(--ink);
     padding:28px 26px; width:100%; max-width:340px;
     font-family:"Avenir Next","Segoe UI",sans-serif;
+    max-height:90vh; overflow-y:auto;
   }
   .theme-grid{
     display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:8px;
@@ -498,6 +500,131 @@
     --paper:#F5EDE3; --ink:#3B2A1E; --ink-soft:#8A7360; --line:#DDC9B0;
     --copper:#8B5A2B; --copper-deep:#6E4520; --input-bg:#FBF6EF;
     --green-fill:#D9C9A0; --blue-fill:#C9B896; --off:#C4B29A;
+  }
+  body.theme-marine{
+    --paper:#EEF2F6; --ink:#1B2A3D; --ink-soft:#5A6E85; --line:#C7D3E0;
+    --copper:#2E4A6E; --copper-deep:#1F3450; --input-bg:#F8FAFC;
+    --green-fill:#C9DDE8; --blue-fill:#9AB6D9; --off:#AFC0D1;
+  }
+  body.theme-foret{
+    --paper:#EFF2EA; --ink:#22331F; --ink-soft:#5E735A; --line:#CBDAC4;
+    --copper:#3E5C33; --copper-deep:#2C4324; --input-bg:#F8FAF6;
+    --green-fill:#C7DAB8; --blue-fill:#A9C9B0; --off:#AABF9E;
+  }
+  body.theme-bordeaux{
+    --paper:#F4EBEC; --ink:#3D1620; --ink-soft:#84525C; --line:#DEBFC4;
+    --copper:#6E1F2E; --copper-deep:#521621; --input-bg:#FBF5F5;
+    --green-fill:#E3C6CB; --blue-fill:#D3A9B4; --off:#C7A0A8;
+  }
+  body.theme-lavande{
+    --paper:#F2EFFA; --ink:#332A4D; --ink-soft:#786E99; --line:#D6CDEE;
+    --copper:#6C5CA6; --copper-deep:#54468A; --input-bg:#FAF8FF;
+    --green-fill:#D9D2F0; --blue-fill:#C3D0F0; --off:#BFB3DC;
+  }
+  body.theme-moutarde{
+    --paper:#FAF3E0; --ink:#4A3A10; --ink-soft:#8C7638; --line:#E7D8A6;
+    --copper:#A9821F; --copper-deep:#836419; --input-bg:#FFFCF3;
+    --green-fill:#E9DFA8; --blue-fill:#D9CBA0; --off:#D2BE86;
+  }
+  body.theme-corail{
+    --paper:#FCEFEA; --ink:#5A2A1E; --ink-soft:#A16C5B; --line:#F0CFC2;
+    --copper:#D46A4E; --copper-deep:#B3543A; --input-bg:#FFF8F5;
+    --green-fill:#F3D7C8; --blue-fill:#E8C3B3; --off:#DDAE9B;
+  }
+  body.theme-turquoise{
+    --paper:#E9F6F5; --ink:#123B39; --ink-soft:#4E8A85; --line:#BFE3E0;
+    --copper:#1E8A82; --copper-deep:#166862; --input-bg:#F5FCFB;
+    --green-fill:#BEE6DF; --blue-fill:#A8DCE0; --off:#9CC9C3;
+  }
+  body.theme-ardoise{
+    --paper:#EDEFF1; --ink:#272E36; --ink-soft:#66707B; --line:#CBD1D8;
+    --copper:#4A5A6B; --copper-deep:#374452; --input-bg:#F8F9FA;
+    --green-fill:#CBD6D0; --blue-fill:#B7C6D6; --off:#B4BEC7;
+  }
+  body.theme-terracotta{
+    --paper:#F6EBE1; --ink:#4E2A18; --ink-soft:#95674E; --line:#E4C4AC;
+    --copper:#B0592F; --copper-deep:#8C4324; --input-bg:#FCF6F1;
+    --green-fill:#E9D2BC; --blue-fill:#DEC1A8; --off:#D2AE93;
+  }
+  body.theme-prune{
+    --paper:#F3ECF1; --ink:#3B1E38; --ink-soft:#815679; --line:#DEC4DA;
+    --copper:#7A3E72; --copper-deep:#5E2F58; --input-bg:#FBF6FA;
+    --green-fill:#E3CEE0; --blue-fill:#D2BFDE; --off:#C6ABC1;
+  }
+  body.theme-sauge{
+    --paper:#F0F2ED; --ink:#33392C; --ink-soft:#727A66; --line:#D5DBC9;
+    --copper:#6D7C55; --copper-deep:#545F41; --input-bg:#F9FAF7;
+    --green-fill:#D6DFC5; --blue-fill:#C4D2C0; --off:#BFC7AE;
+  }
+  body.theme-brique{
+    --paper:#F6ECE7; --ink:#4A2018; --ink-soft:#93594E; --line:#E5C6BC;
+    --copper:#A8442B; --copper-deep:#833420; --input-bg:#FCF6F3;
+    --green-fill:#E9D0C6; --blue-fill:#DDBEB2; --off:#D1A99C;
+  }
+  body.theme-cielete{
+    --paper:#EAF4FB; --ink:#173049; --ink-soft:#587591; --line:#C1DDF0;
+    --copper:#2E7EB8; --copper-deep:#22638F; --input-bg:#F6FBFE;
+    --green-fill:#C2E1EC; --blue-fill:#AED4EE; --off:#A9C5DA;
+  }
+  body.theme-emeraude{
+    --paper:#EAF5EE; --ink:#0F3A24; --ink-soft:#4E8A6A; --line:#BEE3CC;
+    --copper:#1C8A54; --copper-deep:#146840; --input-bg:#F5FCF8;
+    --green-fill:#BEE6CB; --blue-fill:#A9D8C4; --off:#9FC7AE;
+  }
+  body.theme-cafe{
+    --paper:#F1E9E0; --ink:#3A2A1D; --ink-soft:#836F5C; --line:#DECBB6;
+    --copper:#5E4128; --copper-deep:#48311E; --input-bg:#F9F4EE;
+    --green-fill:#DED0B9; --blue-fill:#CFC3B0; --off:#C4B49F;
+  }
+  body.theme-charbon{
+    --paper:#232323; --ink:#EDEDED; --ink-soft:#A8A8A8; --line:#3E3E3E;
+    --copper:#9A9A9A; --copper-deep:#7A7A7A; --input-bg:#2C2C2C;
+    --green-fill:#4A4A3A; --blue-fill:#3A4550; --off:#5A5A5A;
+  }
+  body.theme-minuit{
+    --paper:#161C2B; --ink:#E4E9F5; --ink-soft:#8A96B5; --line:#2C3550;
+    --copper:#5B7FC4; --copper-deep:#4665A0; --input-bg:#1E2538;
+    --green-fill:#2E3A2A; --blue-fill:#28345A; --off:#414D6E;
+  }
+  body.theme-aubergine{
+    --paper:#1E1522; --ink:#EEE4EF; --ink-soft:#A18DA6; --line:#382A3E;
+    --copper:#A366A6; --copper-deep:#824C86; --input-bg:#271C2C;
+    --green-fill:#3A2E3E; --blue-fill:#332A4A; --off:#4E3E54;
+  }
+  body.theme-cerise{
+    --paper:#F7EAEC; --ink:#4A0F1C; --ink-soft:#9C4E5C; --line:#EBC2CA;
+    --copper:#B01A3C; --copper-deep:#8A1330; --input-bg:#FDF5F6;
+    --green-fill:#EFCBD2; --blue-fill:#E3B9C3; --off:#D6A3AC;
+  }
+  body.theme-olive{
+    --paper:#F1F0E5; --ink:#363621; --ink-soft:#78785A; --line:#DBDABC;
+    --copper:#6B6B2E; --copper-deep:#525222; --input-bg:#F9F8F0;
+    --green-fill:#DCDBAE; --blue-fill:#C9CBAC; --off:#C2C29B;
+  }
+  body.theme-noirOr{
+    --paper:#161616; --ink:#F3E6C4; --ink-soft:#B8A878; --line:#332E22;
+    --copper:#C9A227; --copper-deep:#A5811A; --input-bg:#1F1F1F;
+    --green-fill:#3A331A; --blue-fill:#2E2A1E; --off:#4A4432;
+  }
+  body.theme-noirJaune{
+    --paper:#111111; --ink:#FFE24A; --ink-soft:#C7B23A; --line:#3A3517;
+    --copper:#F2D51A; --copper-deep:#C7AC14; --input-bg:#1A1A1A;
+    --green-fill:#3D3810; --blue-fill:#2E2C10; --off:#4A4418;
+  }
+  body.theme-charbonMiel{
+    --paper:#242220; --ink:#F0DCA8; --ink-soft:#B99E68; --line:#3E382C;
+    --copper:#C68A2E; --copper-deep:#9E6D22; --input-bg:#2C2925;
+    --green-fill:#403624; --blue-fill:#332C22; --off:#524632;
+  }
+  body.theme-onyxCitron{
+    --paper:#131313; --ink:#F5F2A8; --ink-soft:#BDB876; --line:#33321C;
+    --copper:#D9D22C; --copper-deep:#AFA920; --input-bg:#1C1C1C;
+    --green-fill:#3B3A1A; --blue-fill:#2C2B18; --off:#4A4728;
+  }
+  body.theme-noirAmbre{
+    --paper:#1A1712; --ink:#F0C878; --ink-soft:#B5924E; --line:#3A311F;
+    --copper:#D98F2E; --copper-deep:#B07222; --input-bg:#221E17;
+    --green-fill:#3E331E; --blue-fill:#302819; --off:#4E4028;
   }
 
   #notifBtn{
@@ -639,7 +766,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -734,7 +861,7 @@ const inventaireItems = [
 const deliveryItems = [
   {name:"Budweiser"},
   {name:"Budlight"}, {name:"Bleue"}, {name:"Labatt 50"}, {name:"Michael OB"},
-  {name:"Corona 0%"}, {name:"Corona"},
+  {name:"Corona 0%", caseSize:28}, {name:"Corona", caseSize:28},
   {spacer:true},
   {name:"White Claw"},
   {spacer:true},
@@ -764,7 +891,8 @@ const tabs = [
   {id:"misc", label:"Poker", ready:true},
   {id:"sunday", label:"Misc.", ready:true},
   {id:"comments", label:"Commentaires", ready:true},
-  {id:"pdfSheets", label:"Feuilles PDF", ready:true}
+  {id:"pdfSheets", label:"Feuilles PDF", ready:true},
+  {id:"schedule", label:"Horaire", ready:true}
 ];
 
 const pdfSheetList = [
@@ -782,7 +910,7 @@ const pdfSheetList = [
 // Supabase client itself is ready (see loadScheduleFromSupabase() call below).
 let staffSchedule = { A:{}, B:{} };
 const dayNameToEn = {Lundi:"Monday", Mardi:"Tuesday", Mercredi:"Wednesday", Jeudi:"Thursday", Vendredi:"Friday", Samedi:"Saturday", Dimanche:"Sunday"};
-const bartenders = ["Claudine","Anais","Maude","Steph","Tanya","Val"];
+const bartenders = ["Claudine","Jen","Maude","Steph","Tanya","Val"];
 
 async function loadScheduleFromSupabase(){
   try{
@@ -939,7 +1067,7 @@ const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
 const roleTabs = {
   barmaid: ['bartDay','bartNight','commander','bills','bottles'],
   janitor: ['inventaire'],
-  boss: ['bartDay','bartNight','bottles','inventaire','delivery','misc','sunday','pdfSheets']
+  boss: ['bartDay','bartNight','bottles','inventaire','delivery','misc','sunday','pdfSheets','schedule']
 };
 const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
 
@@ -947,10 +1075,36 @@ const themes = [
   { id:'jour', label:'☀️ Jour' },
   { id:'nuit', label:'🌙 Nuit' },
   { id:'rose', label:'🍷 Rosé' },
-  { id:'espresso', label:'☕ Espresso Martini' }
+  { id:'espresso', label:'☕ Espresso Martini' },
+  { id:'marine', label:'⚓ Bleu Marine' },
+  { id:'foret', label:'🌲 Vert Forêt' },
+  { id:'bordeaux', label:'🍷 Bordeaux' },
+  { id:'lavande', label:'💜 Lavande' },
+  { id:'moutarde', label:'🌻 Moutarde' },
+  { id:'corail', label:'🪸 Corail' },
+  { id:'turquoise', label:'🌊 Turquoise' },
+  { id:'ardoise', label:'🪨 Gris Ardoise' },
+  { id:'terracotta', label:'🏺 Terracotta' },
+  { id:'prune', label:'🍇 Prune' },
+  { id:'sauge', label:'🌿 Sauge' },
+  { id:'brique', label:'🧱 Rouge Brique' },
+  { id:'cielete', label:'🌤️ Bleu Ciel' },
+  { id:'emeraude', label:'💚 Émeraude' },
+  { id:'cafe', label:'☕ Café' },
+  { id:'charbon', label:'🌑 Charbon' },
+  { id:'minuit', label:'🌃 Minuit' },
+  { id:'aubergine', label:'🍆 Aubergine' },
+  { id:'cerise', label:'🍒 Cerise' },
+  { id:'olive', label:'🫒 Olive' },
+  { id:'noirOr', label:'⚫ Noir et Or' },
+  { id:'noirJaune', label:'⚫ Noir et Jaune Vif' },
+  { id:'charbonMiel', label:'⚫ Charbon et Miel' },
+  { id:'onyxCitron', label:'⚫ Onyx et Citron' },
+  { id:'noirAmbre', label:'⚫ Noir Mat et Ambre' }
 ];
 function applyTheme(themeId){
-  document.body.classList.remove('theme-nuit','theme-rose','theme-espresso');
+  const allThemeClasses = themes.filter(t=>t.id!=='jour').map(t=>'theme-'+t.id);
+  document.body.classList.remove(...allThemeClasses);
   if(themeId && themeId !== 'jour') document.body.classList.add('theme-'+themeId);
   try{ localStorage.setItem('barTheme', themeId); }catch(e){ /* ignore */ }
 }
@@ -989,6 +1143,10 @@ const BEER_INDICES = [0,1,2,3,4,5,6,7,11,12,13];
 const NONBEER_INDICES = [16,17,18,19,20,21,22,23,24];
 let simpleBeerIndex = { bartDay: 0, bartNight: 0 }; // carousel position, per shift
 let activeCarouselKeyHandler = null; // only one carousel is ever on-screen at a time
+// On a touch device the OS keyboard would cover the floating buttons, so those fields
+// go readonly and the custom keypad becomes the only way in. On desktop there's no such
+// keyboard to fight with, so typing directly stays available alongside the custom keypad.
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
 // Shared behavior for every Simple Mode one-at-a-time carousel (beers, non-bières,
 // Fût, Inventaire). Sizes/dims rows via font-size (never CSS transform — scaling a
@@ -999,6 +1157,10 @@ let activeCarouselKeyHandler = null; // only one carousel is ever on-screen at a
 let lastCarouselFieldIdx = 0; // persists across Up/Down navigation, restored on the new current row
 
 function setupSimpleCarousel(rows, currentIdx, onIndexChange){
+  // Reserve room for the keypad NOW, synchronously, before anything tries to scroll —
+  // otherwise the browser centers against the full window height, and an item near
+  // the end of the list ends up scrolled to a position the fixed keypad then covers.
+  document.body.style.paddingBottom = '240px';
   let fieldIdx = lastCarouselFieldIdx;
   rows.forEach((tr, i)=>{
     const isCurrent = i === currentIdx;
@@ -1027,10 +1189,12 @@ function setupSimpleCarousel(rows, currentIdx, onIndexChange){
   if(currentTr){
     Array.from(currentTr.querySelectorAll('input')).forEach((inp, i)=>{
       // readonly blocks the device's own keyboard from popping up at all (more reliable
-      // across browsers than inputmode alone for type="number") — the custom keypad
-      // below is the only way to actually change the value.
-      inp.setAttribute('readonly', '');
-      inp.setAttribute('inputmode', 'none');
+      // across browsers than inputmode alone for type="number") — touch only, since
+      // desktop has no on-screen keyboard to fight with and can just type normally.
+      if(isTouchDevice){
+        inp.setAttribute('readonly', '');
+        inp.setAttribute('inputmode', 'none');
+      }
       inp.addEventListener('focus', ()=>{
         fieldIdx = i; lastCarouselFieldIdx = i;
         showCustomKeypad(
@@ -1091,7 +1255,8 @@ const simpleTreeBoss = {
     }},
     misc: { label: 'Poker', emoji: '🃏', color: '#B0402A', tab: 'misc' },
     sunday: { label: 'Misc', emoji: '📝', color: '#2E4A5E', tab: 'sunday' },
-    pdfSheets: { label: 'Feuilles PDF', emoji: '📄', color: '#A566B8', tab: 'pdfSheets' }
+    pdfSheets: { label: 'Feuilles PDF', emoji: '📄', color: '#A566B8', tab: 'pdfSheets' },
+    schedule: { label: 'Horaire', emoji: '🗓️', color: '#2E4A5E', tab: 'schedule' }
   }},
   stock: { label: 'Stock du Quart', emoji: '📋', color: '#2E4A5E', children: {
     ...stockDayNightChildren(),
@@ -1477,6 +1642,7 @@ function renderSimpleUI(){
   simpleModeHost.innerHTML = '';
   hideSimpleFloatButtons();
   hideCustomKeypad();
+  document.body.style.paddingBottom = '0'; // reset — setupSimpleCarousel re-applies it only if this render is actually a carousel
   // Only one carousel's keyboard listener should ever be live — clear it here so
   // navigating away from the beers view (Back, or a different leaf) doesn't leave a
   // stale one still responding to arrow keys.
@@ -1708,6 +1874,7 @@ function renderTabs(){
   simpleBackBtn.style.display = 'none';
   hideSimpleFloatButtons();
   hideCustomKeypad();
+  document.body.style.paddingBottom = '0';
   document.getElementById('prefsBtn').style.display = '';
   document.getElementById('commentsBtn').style.display = 'block';
   // (panelHost itself gets shown again when leaving Simple Mode via setSimpleMode(),
@@ -1777,6 +1944,8 @@ function renderPanel(){
     panel.appendChild(buildCommentsPanel());
   } else if(tab.id === "pdfSheets"){
     panel.appendChild(buildPdfSheetsPanel());
+  } else if(tab.id === "schedule"){
+    panel.appendChild(buildSchedulePanel());
   } else {
     const stub = document.createElement('div');
     stub.className = 'stub';
@@ -2057,38 +2226,48 @@ function buildAccountantSheet(){
     cell(r,2, value, cls, desc);
     cell(r,3,desc,'pg-label');
   }
+  // A field left blank counts as 0 rather than blocking the whole sheet — the cell just
+  // turns yellow with a tooltip naming what's still missing, so the owner gets a usable
+  // number right away instead of a wall of question marks.
+  function knownRow(r, label, known, rawValue, desc){
+    const val = round2(Number(rawValue)||0);
+    row(r, label, val, known ? desc : `${desc} — pas encore rempli, compté comme 0`, known?'pg-calc':'pg-assumed');
+  }
 
   row(1,'Caisses', totCash, 'total cash for the week net', 'pg-calc');
   row(2,'Poker', pokerNet, 'Total Coupons – Total inserted', 'pg-calc');
-  row(3,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : '?', 'Pool (from Overall Summary)', poolKnown?'pg-calc':'pg-unknown');
-  row(4,'Pinut', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : '?', 'Peanuts (from Overall Summary)', pinutsKnown?'pg-calc':'pg-unknown');
-  row(5,'Paie Jabon', paieJaboinKnown ? round2(Number(sun.paieJaboin)) : '?', 'Misc (from Overall Summary)', paieJaboinKnown?'pg-calc':'pg-unknown');
+  knownRow(3,'Pool', poolKnown, sun.poolTbxl, 'Pool (from Overall Summary)');
+  knownRow(4,'Pinut', pinutsKnown, sun.pinutsTbxl, 'Peanuts (from Overall Summary)');
+  knownRow(5,'Paie Jabon', paieJaboinKnown, sun.paieJaboin, 'Misc (from Overall Summary)');
   row(6,'Taxes', totTaxes, 'Taxes for the week (from Overall Summary)', 'pg-calc');
 
-  const totKnown = poolKnown && pinutsKnown && paieJaboinKnown;
-  const totValue = totKnown ? round2(totCash + pokerNet + Number(sun.poolTbxl) + Number(sun.pinutsTbxl) + Number(sun.paieJaboin) + totTaxes) : null;
+  const totAllKnown = poolKnown && pinutsKnown && paieJaboinKnown;
+  const totValue = round2(totCash + pokerNet + (Number(sun.poolTbxl)||0) + (Number(sun.pinutsTbxl)||0) + (Number(sun.paieJaboin)||0) + totTaxes);
+  const totMissing = [!poolKnown&&'Pool', !pinutsKnown&&'Pinut', !paieJaboinKnown&&'Paie Jabon'].filter(Boolean);
   cell(8,1,'TOT','pg-day');
-  cell(8,2, totValue===null?'?':totValue, totValue===null?'pg-unknown':'pg-calc');
+  cell(8,2, totValue, totAllKnown?'pg-calc':'pg-assumed', totAllKnown?null:`Compté avec ${totMissing.join(', ')} à 0 — pas encore rempli`);
 
-  row(10,'Facture', facturesKnown ? round2(Number(sun.factures)) : '?', 'Receipts Paid in Cash (from Overall Summary)', facturesKnown?'pg-calc':'pg-unknown');
+  knownRow(10,'Facture', facturesKnown, sun.factures, 'Receipts Paid in Cash (from Overall Summary)');
   row(11,'Interac', totInterac, 'Receipts paid in Interac (from Overall Summary)', 'pg-calc');
   row(12,'Guich Poker', round2(pk.guichet), 'Amount put in the atm (from Overall Summary)', 'pg-calc');
-  row(13,'Guich Caisses', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : '?', 'from Overall Summary', guichCaissesKnown?'pg-calc':'pg-unknown');
+  knownRow(13,'Guich Caisses', guichCaissesKnown, sun.guichCaisses, 'from Overall Summary');
   const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
-  row(14,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : '?', 'Deposit at bank (Misc., Section 2)', depotOverallKnown?'pg-calc':'pg-unknown');
+  knownRow(14,'Depot', depotOverallKnown, sun.depotOverall, 'Deposit at bank (Misc., Section 2)');
   row(15,'Coup/Valid', round2(pk.machine), 'Coupons that were inserted in the poker machines', 'pg-calc');
 
-  const resteKnown = totKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
-  const resteValue = resteKnown ? round2(
-    totValue - Number(sun.factures) - totInterac - pk.guichet - Number(sun.guichCaisses) - Number(sun.depotOverall) - pk.machine
-  ) : null;
-  cell(17,1,'Reste','pg-day'); cell(17,2, resteValue===null?'?':resteValue, resteValue===null?'pg-unknown':'pg-calc', 'TOT moins Facture, Interac, Guich Poker, Guich Caisses, Depot et Coup/Valid.');
+  const resteAllKnown = totAllKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
+  const resteValue = round2(
+    totValue - (Number(sun.factures)||0) - totInterac - pk.guichet - (Number(sun.guichCaisses)||0) - (Number(sun.depotOverall)||0) - pk.machine
+  );
+  const resteMissing = [...totMissing, !facturesKnown&&'Facture', !guichCaissesKnown&&'Guich Caisses', !depotOverallKnown&&'Depot'].filter(Boolean);
+  cell(17,1,'Reste','pg-day'); cell(17,2, resteValue, resteAllKnown?'pg-calc':'pg-assumed',
+    (resteAllKnown ? '' : `Compté avec ${resteMissing.join(', ')} à 0 — pas encore rempli. `) + 'TOT moins Facture, Interac, Guich Poker, Guich Caisses, Depot et Coup/Valid.');
 
   wrap.appendChild(grid);
 
   const note = document.createElement('div');
   note.className = 'stub'; note.style.padding='14px 0 0';
-  note.textContent = "Depot et Reste — pas encore de source de données, laissés en orange.";
+  note.textContent = "Les cases jaunes comptent un champ pas encore rempli comme 0 — survole pour voir lequel.";
   wrap.appendChild(note);
 
   wrap.appendChild(buildBottomBar());
@@ -2125,9 +2304,10 @@ function buildInventorySheet(){
     if(idx===-1) return null;
     const r = bucket.delivery?.[`row${idx}`];
     if(!r) return 0;
-    // A manually-corrected total (e.g. a short case) takes priority over cases × 24.
+    const caseSize = deliveryItems[idx].caseSize || 24;
+    // A manually-corrected total (e.g. a short case) takes priority over cases × case size.
     if(r.totalManual && r.total !== "" && r.total !== undefined) return Number(r.total);
-    return r.cases ? Number(r.cases)*24 : 0;
+    return r.cases ? Number(r.cases)*caseSize : 0;
   }
 
   // Sold(day,item) = Hier (confirmé) − Aujourd'hui (nouveau total) + Ajout jour + Ajout soir + Ajouté janitor.
@@ -2294,8 +2474,8 @@ function buildOverallSheet(){
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
   const sun = weekBucket(state.week);
-  const staffList = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','Schneider'];
-  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
+  const staffList = ['Val','Tanya','Maude','Jen','Stephanie','Claudine','Schneider'];
+  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jen', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
@@ -2333,14 +2513,13 @@ function buildOverallSheet(){
 
   // Schneider's Vente/Semaine comes from Reading (Sunday tab), not Jour/Nuit — he doesn't use those fields.
   const readingKnown = sun.reading !== "" && sun.reading !== undefined;
-  const schneiderVenteKnown = readingKnown;
-  totals['Schneider'].vente = readingKnown ? Number(sun.reading) : null;
+  totals['Schneider'].vente = round2(Number(sun.reading)||0);
 
   staffList.forEach((name,i)=>{
     const row = 3+i;
     cell(row,1,name,'pg-label');
-    if(name==='Schneider' && totals[name].vente===null){
-      cell(row,3,'?','pg-unknown');
+    if(name==='Schneider' && !readingKnown){
+      cell(row,3, totals[name].vente, 'pg-assumed', 'Reading pas encore rempli — compté comme 0');
     } else {
       cell(row,3, round2(totals[name].vente), 'pg-calc');
     }
@@ -2365,11 +2544,11 @@ function buildOverallSheet(){
 
   function unk(row, col, label, why){
     cell(row, col, label, 'pg-label');
-    cell(row, col+1, '?', 'pg-unknown', why || 'Aucune source de données définie pour ce champ.');
+    cell(row, col+1, 0, 'pg-assumed', (why || 'Aucune source de données définie pour ce champ.') + ' — compté comme 0');
   }
   function known(row, col, label, value, tooltip){
     cell(row, col, label, 'pg-label');
-    if(value===null) cell(row, col+1, '?', 'pg-unknown', tooltip || 'Encore inconnu — dépend d\'une autre valeur non résolue.');
+    if(value===null) cell(row, col+1, 0, 'pg-assumed', (tooltip ? tooltip+' — ' : '') + 'pas encore rempli, compté comme 0');
     else cell(row, col+1, value, 'pg-calc', tooltip);
   }
 
@@ -2566,15 +2745,15 @@ function buildTransactionSheet(){
     });
   });
   const readingKnown = sun.reading !== "" && sun.reading !== undefined;
-  const meArgent = readingKnown ? round2(Number(sun.reading) + meOver + meTPS + meTVQ - meInterac) : '?';
+  const meArgent = round2((Number(sun.reading)||0) + meOver + meTPS + meTVQ - meInterac);
 
   cell(17,10,'Schneider','pg-header');
-  cell(18,9,'Reading','pg-label'); cell(18,10, readingKnown ? round2(Number(sun.reading)) : '?', readingKnown?'pg-calc':'pg-unknown');
+  cell(18,9,'Reading','pg-label'); cell(18,10, round2(Number(sun.reading)||0), readingKnown?'pg-calc':'pg-assumed', readingKnown?null:'Pas encore rempli — compté comme 0');
   cell(19,9,'Over','pg-label');    cell(19,10, round2(meOver), 'pg-calc');
   cell(20,9,'TPS','pg-label');     cell(20,10, round2(meTPS), 'pg-calc');
   cell(21,9,'TVQ','pg-label');     cell(21,10, round2(meTVQ), 'pg-calc');
   cell(22,9,'Interac','pg-label'); cell(22,10, round2(meInterac), 'pg-calc');
-  cell(23,9,'Argent','pg-label');  cell(23,10, meArgent, readingKnown?'pg-calc':'pg-unknown');
+  cell(23,9,'Argent','pg-label');  cell(23,10, meArgent, readingKnown?'pg-calc':'pg-assumed', readingKnown?null:'Compté avec Reading à 0 — pas encore rempli');
 
   // TOTAL row (row 25) — matches the real formulas, folding in the Schneider block for D-H.
   cell(25,1,'Total','pg-day');
@@ -2584,13 +2763,13 @@ function buildTransactionSheet(){
   cell(25,5, round2(totTPS + meTPS), 'pg-calc');
   cell(25,6, round2(totTVQ + meTVQ), 'pg-calc');
   cell(25,7, round2(totInterac + meInterac), 'pg-calc');
-  cell(25,8, readingKnown ? round2(totArgent + meArgent) : '?', readingKnown ? 'pg-calc' : 'pg-unknown');
+  cell(25,8, round2(totArgent + meArgent), readingKnown ? 'pg-calc' : 'pg-assumed', readingKnown?null:'Compté avec Reading à 0 — pas encore rempli');
 
   // Top-right block — pulled from the Sunday tab
   function sunCell(row, col, key, label){
     cell(row, col, label, 'pg-label');
     const known = sun[key] !== "" && sun[key] !== undefined;
-    cell(row, col+1, known ? round2(Number(sun[key])) : '?', known?'pg-calc':'pg-unknown');
+    cell(row, col+1, round2(Number(sun[key])||0), known?'pg-calc':'pg-assumed', known?null:'Pas encore rempli — compté comme 0');
   }
   sunCell(1,9,'env','ENV');
   sunCell(3,10,'factures','Factures');
@@ -2624,8 +2803,8 @@ function buildShiftSummarySheet(){
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
-  const staffColumns = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','ME'];
-  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
+  const staffColumns = ['Val','Tanya','Maude','Jennifer','Stephanie','Claudine','ME'];
+  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jennifer', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
 
   const dayRows = [
     {day:'Lundi',    label:'Lundi',    header:4,  entree:5,  sortie:6 },
@@ -2723,9 +2902,9 @@ function computeWeekPokerFull(weekK){
   const D17 = round2(B17-F12); // Over poker
   const sun = weekBucket(weekK);
   const depotKnown = sun.depot !== "" && sun.depot !== undefined;
-  const depot = depotKnown ? Number(sun.depot) : null;
-  const reste = depotKnown ? round2(B17 - B12 - depot) : null;
-  const depart = depotKnown ? round2(reste + D17) : null;
+  const depot = round2(Number(sun.depot)||0);
+  const reste = round2(B17 - B12 - depot);
+  const depart = round2(reste + D17);
   return {B12,F12,B14,B15,B16,B17,D17,depot,reste,depart,depotKnown};
 }
 
@@ -2807,10 +2986,10 @@ function buildPokerSheet(){
   const B17 = wk.B17, D17 = wk.D17;
   const J3 = B17;  // = B17
   const J5 = B12;  // Coupons
-  const J6 = wk.depotKnown ? wk.depot : '?';  // Depot — manual, entered on the Poker tab
-  const J8 = wk.reste===null ? '?' : wk.reste;  // Reste = Total - Coupons - Depot
+  const J6 = wk.depot;  // Depot — manual, entered on the Poker tab
+  const J8 = wk.reste;  // Reste = Total - Coupons - Depot
   const J10 = D17; // = D17
-  const J12 = wk.depart===null ? '?' : wk.depart; // Depart = Reste + Over
+  const J12 = wk.depart; // Depart = Reste + Over
   const J14 = G12; // = G12
   const J15 = round2(J14*0.8); // LottoQ
   const J16 = round2(J14*0.2); // Club
@@ -2844,13 +3023,13 @@ function buildPokerSheet(){
     cell(row,7,r.net,'pg-calc', 'Net = Inséré − Coupons/Win, pour cette journée.');
   });
   cell(5,8,'-','pg-label'); cell(5,9,'Coupons','pg-label'); cell(5,10,J5,'pg-calc', 'Total Coupons/Win de la semaine (B12).');
-  cell(6,8,'=','pg-label'); cell(6,9,'Depot','pg-label'); cell(6,10,J6, wk.depotKnown?'pg-calc':'pg-unknown', 'Saisi manuellement sur l\'onglet Poker, une fois par semaine.');
-  cell(8,9,'Reste','pg-label'); cell(8,10,J8, wk.reste===null?'pg-unknown':'pg-calc', 'Total (B17) moins Coupons/Win (B12) moins Depot.');
+  cell(6,8,'=','pg-label'); cell(6,9,'Depot','pg-label'); cell(6,10,J6, wk.depotKnown?'pg-calc':'pg-assumed', wk.depotKnown?'Saisi manuellement sur l\'onglet Poker, une fois par semaine.':'Pas encore rempli — compté comme 0');
+  cell(8,9,'Reste','pg-label'); cell(8,10,J8, wk.depotKnown?'pg-calc':'pg-assumed', 'Total (B17) moins Coupons/Win (B12) moins Depot.' + (wk.depotKnown?'':' Compté avec Depot à 0.'));
   cell(10,9,'Over','pg-label'); cell(10,10,J10,'pg-calc', 'Over poker (D17) = Total (B17) moins Total inséré (F12).');
 
   cell(12,1,'Total','pg-label'); cell(12,2,B12,'pg-calc', 'Somme des Coupons/Win des 7 jours de la semaine.');
   cell(12,5,'Total','pg-label'); cell(12,6,F12,'pg-calc', 'Somme des montants Insérés des 7 jours.'); cell(12,7,G12,'pg-calc', 'Somme des Net (Inséré − Win) des 7 jours.');
-  cell(12,9,'Depart','pg-label'); cell(12,10,J12, wk.depart===null?'pg-unknown':'pg-calc', 'Reste + Over — devient le "Depart: Over from Cash" de la semaine prochaine.');
+  cell(12,9,'Depart','pg-label'); cell(12,10,J12, wk.depotKnown?'pg-calc':'pg-assumed', 'Reste + Over — devient le "Depart: Over from Cash" de la semaine prochaine.' + (wk.depotKnown?'':' Compté avec Depot à 0.'));
 
   cell(14,1,'Argent','pg-label'); cell(14,2,B14,'pg-calc', 'Cash dans la caisse (distinct du guichet) — somme de la semaine, onglet Poker.');
   cell(14,9,'Total','pg-label'); cell(14,10,J14,'pg-calc', 'Net total de la semaine (G12).'); cell(14,11,'total net','pg-label');
@@ -3219,12 +3398,13 @@ function buildMiscPanel(){
     table.className = 'form-table'; table.style.maxWidth = '300px';
     table.innerHTML = `<thead><tr><th>Jour</th><th>${label}</th></tr></thead>`;
     const tbody = document.createElement('tbody');
-    let total = 0;
+    const dayStores = [];
     dayNames.forEach(d=>{
       const dayBucket = bucketFor(state.week, d);
       if(!dayBucket.misc) dayBucket.misc = {};
       const dStore = dayBucket.misc;
       if(dStore[fieldKey] === undefined) dStore[fieldKey] = "";
+      dayStores.push(dStore);
       const isActive = d === state.day;
       const tr = document.createElement('tr');
       if(!isActive) tr.style.opacity = '0.4';
@@ -3234,18 +3414,25 @@ function buildMiscPanel(){
       const input = document.createElement('input');
       input.type='number'; input.className='num'; input.value = dStore[fieldKey];
       input.disabled = !isActive;
-      input.addEventListener('input', ()=>{ dStore[fieldKey] = input.value; });
+      input.addEventListener('input', ()=>{ dStore[fieldKey] = input.value; recalcTotal(); });
       tdVal.appendChild(input);
       tr.appendChild(tdDay); tr.appendChild(tdVal);
       tbody.appendChild(tr);
-      total += Number(dStore[fieldKey])||0;
     });
     table.appendChild(tbody);
+    let totalCell = null;
     if(showTotal){
       const tfoot = document.createElement('tfoot');
-      tfoot.innerHTML = `<tr><td style="font-weight:700;">Total</td><td style="font-weight:700;">${round2(total)}</td></tr>`;
+      tfoot.innerHTML = `<tr><td style="font-weight:700;">Total</td><td style="font-weight:700;"></td></tr>`;
+      totalCell = tfoot.querySelector('td:last-child');
       table.appendChild(tfoot);
     }
+    function recalcTotal(){
+      if(!totalCell) return;
+      const total = dayStores.reduce((s,ds)=> s + (Number(ds[fieldKey])||0), 0);
+      totalCell.textContent = round2(total);
+    }
+    recalcTotal();
     wrap.appendChild(table);
   }
 
@@ -4913,6 +5100,77 @@ async function saveBottleOwnerState(bottleIndex, startingCount, totalAdded){
   await sb.from('bottles_owner_state').upsert({ bottle_index: bottleIndex, starting_count: startingCount, total_added: totalAdded }, {onConflict:'bottle_index'});
 }
 
+function buildSchedulePanel(){
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <h2>Horaire — rotation A/B</h2>
+    <div class="sub">Une ligne par jour, un nom par quart. La semaine A ou B est déterminée automatiquement selon la date.</div>
+  `;
+
+  const table = document.createElement('table');
+  table.className = 'form-table';
+  table.innerHTML = `<thead><tr><th>Jour</th><th>A — Jour</th><th>A — Soir</th><th>B — Jour</th><th>B — Soir</th></tr></thead>`;
+  const tbody = document.createElement('tbody');
+
+  const cells = []; // {parity, enDay, shiftKey, input} — collected for the save handler
+  dayNames.forEach(d=>{
+    const enDay = dayNameToEn[d];
+    const tr = document.createElement('tr');
+    const tdDay = document.createElement('td'); tdDay.textContent = d; tdDay.style.fontWeight = '600';
+    tr.appendChild(tdDay);
+    ['A','B'].forEach(parity=>{
+      ['Day','Night'].forEach(shiftKey=>{
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = (staffSchedule[parity]?.[enDay]?.[shiftKey]) || '';
+        input.style.cssText = 'width:100px;';
+        td.appendChild(input);
+        tr.appendChild(td);
+        cells.push({ parity, enDay, shiftKey, input });
+      });
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  const bar = document.createElement('div');
+  bar.className = 'bottom-bar no-print';
+  const status = document.createElement('div');
+  status.className = 'status'; status.textContent = 'Pas encore enregistré.';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary'; saveBtn.textContent = 'Enregistrer';
+  saveBtn.addEventListener('click', async ()=>{
+    saveBtn.disabled = true;
+    try{
+      const rows = cells.map(c=>({
+        parity: c.parity, day: c.enDay, shift_type: c.shiftKey, bartender: c.input.value.trim() || null
+      }));
+      const { error } = await sb.from('schedule').upsert(rows, { onConflict: 'parity,day,shift_type' });
+      if(error) throw error;
+      // Update the in-memory copy too, so defaultBartender() picks up the change
+      // immediately without needing a full page reload.
+      const rebuilt = { A:{}, B:{} };
+      rows.forEach(r=>{
+        if(!rebuilt[r.parity][r.day]) rebuilt[r.parity][r.day] = {};
+        rebuilt[r.parity][r.day][r.shift_type] = r.bartender;
+      });
+      staffSchedule = rebuilt;
+      status.textContent = `Enregistré — ${new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'})}`;
+      showSaveToast('✓ Enregistré', false);
+    }catch(e){
+      status.textContent = "Erreur d'enregistrement — " + (e.message||e);
+      showSaveToast('⚠ Erreur d\'enregistrement', true);
+    }
+    saveBtn.disabled = false;
+  });
+  bar.appendChild(status); bar.appendChild(saveBtn);
+  wrap.appendChild(bar);
+
+  return wrap;
+}
+
 function buildBottlesOwnerPanel(){
   const wrap = document.createElement('div');
   wrap.innerHTML = `
@@ -5114,7 +5372,7 @@ function buildDeliveryPanel(){
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <h2>Beer Delivery</h2>
-    <div class="sub">${state.day} — actif seulement les lundis et jeudis. Nombre de caisses; le total se calcule par défaut (× 24), mais peut être corrigé si une caisse n'est pas complète.</div>
+    <div class="sub">${state.day} — actif seulement les lundis et jeudis. Nombre de caisses; le total se calcule par défaut (× 24, sauf Corona et Corona 0% qui sont × 28), mais peut être corrigé si une caisse n'est pas complète.</div>
   `;
   const table = document.createElement('table');
   table.className = 'form-table';
@@ -5136,15 +5394,16 @@ function buildDeliveryPanel(){
     const tdTotal = document.createElement('td');
     const inTotal = document.createElement('input');
     inTotal.type='number'; inTotal.className='num';
+    const caseSize = item.caseSize || 24;
     if(!store[key].totalManual){
-      store[key].total = store[key].cases ? round2(Number(store[key].cases)*24) : "";
+      store[key].total = store[key].cases ? round2(Number(store[key].cases)*caseSize) : "";
     }
     inTotal.value = store[key].total;
 
     inCases.addEventListener('input', ()=>{
       store[key].cases = inCases.value;
       if(!store[key].totalManual){
-        store[key].total = store[key].cases ? round2(Number(store[key].cases)*24) : "";
+        store[key].total = store[key].cases ? round2(Number(store[key].cases)*caseSize) : "";
         inTotal.value = store[key].total;
       }
     });
