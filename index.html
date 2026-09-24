@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.890</title>
+<title>Registre du bar v 2.891</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -766,7 +766,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.7</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.8</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -910,7 +910,7 @@ const pdfSheetList = [
 // Supabase client itself is ready (see loadScheduleFromSupabase() call below).
 let staffSchedule = { A:{}, B:{} };
 const dayNameToEn = {Lundi:"Monday", Mardi:"Tuesday", Mercredi:"Wednesday", Jeudi:"Thursday", Vendredi:"Friday", Samedi:"Saturday", Dimanche:"Sunday"};
-const bartenders = ["Claudine","Jen","Maude","Steph","Tanya","Val"];
+const bartenders = ["Anais","Claudine","Maude","Steph","Tanya","Val"];
 
 async function loadScheduleFromSupabase(){
   try{
@@ -2474,8 +2474,8 @@ function buildOverallSheet(){
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
   const sun = weekBucket(state.week);
-  const staffList = ['Val','Tanya','Maude','Jen','Stephanie','Claudine','Schneider'];
-  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jen', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
+  const staffList = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','Schneider'];
+  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
@@ -2803,8 +2803,8 @@ function buildShiftSummarySheet(){
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
-  const staffColumns = ['Val','Tanya','Maude','Jennifer','Stephanie','Claudine','ME'];
-  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Jen:'Jennifer', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
+  const staffColumns = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','ME'];
+  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
 
   const dayRows = [
     {day:'Lundi',    label:'Lundi',    header:4,  entree:5,  sortie:6 },
