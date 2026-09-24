@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.891</title>
+<title>Registre du bar v 2.892</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -766,7 +766,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.8</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v7.9</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -910,7 +910,7 @@ const pdfSheetList = [
 // Supabase client itself is ready (see loadScheduleFromSupabase() call below).
 let staffSchedule = { A:{}, B:{} };
 const dayNameToEn = {Lundi:"Monday", Mardi:"Tuesday", Mercredi:"Wednesday", Jeudi:"Thursday", Vendredi:"Friday", Samedi:"Saturday", Dimanche:"Sunday"};
-const bartenders = ["Anais","Claudine","Maude","Steph","Tanya","Val"];
+let bartenders = ["Anais","Claudine","Maude","Steph","Tanya","Val"]; // fallback default until loaded live
 
 async function loadScheduleFromSupabase(){
   try{
@@ -953,6 +953,27 @@ async function loadBottlesListFromSupabase(){
 }
 async function saveBottleName(bottleIndex, name){
   await sb.from('bottles_list').upsert({ bottle_index: bottleIndex, name }, {onConflict:'bottle_index'});
+}
+
+// Live barmaid roster — feeds the login dropdown and the Horaire page's dropdowns.
+async function loadBarmaidListFromSupabase(){
+  try{
+    const { data, error } = await sb.from('barmaid_list').select('*').order('name', {ascending:true});
+    if(error) throw error;
+    if(data && data.length){ bartenders = data.map(r=>r.name); }
+    refreshBarmaidLoginDropdown();
+    if(state.tab === 'schedule') renderPanel();
+  }catch(e){ /* keep the fallback */ }
+}
+async function addBarmaidToRoster(name){
+  await sb.from('barmaid_list').insert({ name });
+  bartenders = [...bartenders, name].sort();
+  refreshBarmaidLoginDropdown();
+}
+async function removeBarmaidFromRoster(name){
+  await sb.from('barmaid_list').delete().eq('name', name);
+  bartenders = bartenders.filter(n=>n!==name);
+  refreshBarmaidLoginDropdown();
 }
 
 // Which real calendar weeks are "A" vs "B" is not yet confirmed — placeholder anchor below.
@@ -5112,7 +5133,7 @@ function buildSchedulePanel(){
   table.innerHTML = `<thead><tr><th>Jour</th><th>A — Jour</th><th>A — Soir</th><th>B — Jour</th><th>B — Soir</th></tr></thead>`;
   const tbody = document.createElement('tbody');
 
-  const cells = []; // {parity, enDay, shiftKey, input} — collected for the save handler
+  const cells = []; // {parity, enDay, shiftKey, select} — collected for the save handler and for live roster updates
   dayNames.forEach(d=>{
     const enDay = dayNameToEn[d];
     const tr = document.createElement('tr');
@@ -5121,13 +5142,13 @@ function buildSchedulePanel(){
     ['A','B'].forEach(parity=>{
       ['Day','Night'].forEach(shiftKey=>{
         const td = document.createElement('td');
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = (staffSchedule[parity]?.[enDay]?.[shiftKey]) || '';
-        input.style.cssText = 'width:100px;';
-        td.appendChild(input);
+        const select = document.createElement('select');
+        select.style.cssText = 'width:110px;';
+        const currentName = (staffSchedule[parity]?.[enDay]?.[shiftKey]) || '';
+        populateBarmaidSelect(select, currentName);
+        td.appendChild(select);
         tr.appendChild(td);
-        cells.push({ parity, enDay, shiftKey, input });
+        cells.push({ parity, enDay, shiftKey, select });
       });
     });
     tbody.appendChild(tr);
@@ -5145,7 +5166,7 @@ function buildSchedulePanel(){
     saveBtn.disabled = true;
     try{
       const rows = cells.map(c=>({
-        parity: c.parity, day: c.enDay, shift_type: c.shiftKey, bartender: c.input.value.trim() || null
+        parity: c.parity, day: c.enDay, shift_type: c.shiftKey, bartender: c.select.value || null
       }));
       const { error } = await sb.from('schedule').upsert(rows, { onConflict: 'parity,day,shift_type' });
       if(error) throw error;
@@ -5168,7 +5189,79 @@ function buildSchedulePanel(){
   bar.appendChild(status); bar.appendChild(saveBtn);
   wrap.appendChild(bar);
 
+  // ---- Barmaids enregistrées — add/remove here updates every dropdown above instantly,
+  // without touching whatever's already selected elsewhere on the page. ----
+  const rosterHeading = document.createElement('div');
+  rosterHeading.className = 'sub'; rosterHeading.style.fontWeight = '600'; rosterHeading.style.marginTop = '30px';
+  rosterHeading.textContent = 'Barmaids enregistrées';
+  wrap.appendChild(rosterHeading);
+
+  const rosterList = document.createElement('div');
+  rosterList.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;';
+  wrap.appendChild(rosterList);
+
+  function renderRoster(){
+    rosterList.innerHTML = '';
+    bartenders.forEach(name=>{
+      const chip = document.createElement('div');
+      chip.style.cssText = 'display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--ink); border-radius:4px; font-size:0.9rem;';
+      const label = document.createElement('span'); label.textContent = name;
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '×';
+      delBtn.style.cssText = 'background:none; border:none; color:#B0402A; font-weight:700; font-size:1.1rem; cursor:pointer; line-height:1;';
+      delBtn.addEventListener('click', async ()=>{
+        if(!confirm(`Retirer ${name} de la liste des barmaids ?`)) return;
+        await removeBarmaidFromRoster(name);
+        refreshAllBarmaidSelects();
+        renderRoster();
+      });
+      chip.appendChild(label); chip.appendChild(delBtn);
+      rosterList.appendChild(chip);
+    });
+  }
+  renderRoster();
+
+  const addRow = document.createElement('div');
+  addRow.style.cssText = 'display:flex; gap:8px; margin-top:12px;';
+  const addInput = document.createElement('input');
+  addInput.type = 'text'; addInput.placeholder = 'Nom de la nouvelle barmaid';
+  addInput.style.cssText = 'flex:1; max-width:220px;';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'print-btn'; addBtn.textContent = '+ Ajouter';
+  addBtn.addEventListener('click', async ()=>{
+    const name = addInput.value.trim();
+    if(!name) return;
+    if(bartenders.includes(name)){ addInput.value = ''; return; }
+    addBtn.disabled = true;
+    await addBarmaidToRoster(name);
+    refreshAllBarmaidSelects();
+    renderRoster();
+    addInput.value = '';
+    addBtn.disabled = false;
+  });
+  addRow.appendChild(addInput); addRow.appendChild(addBtn);
+  wrap.appendChild(addRow);
+
+  // Rebuilds every dropdown's option list in place, preserving each one's current
+  // selection when possible — this is what makes add/remove show up immediately above
+  // without a full page reload or losing any not-yet-saved selections elsewhere.
+  function refreshAllBarmaidSelects(){
+    cells.forEach(c=> populateBarmaidSelect(c.select, c.select.value));
+  }
+
   return wrap;
+}
+function populateBarmaidSelect(select, currentValue){
+  select.innerHTML = '';
+  const blankOpt = document.createElement('option'); blankOpt.value = ''; blankOpt.textContent = '—';
+  select.appendChild(blankOpt);
+  bartenders.forEach(name=>{
+    const opt = document.createElement('option'); opt.value = name; opt.textContent = name;
+    select.appendChild(opt);
+  });
+  // If the previously-selected name was just removed from the roster, this correctly
+  // falls back to blank rather than silently keeping a name that no longer exists.
+  select.value = bartenders.includes(currentValue) ? currentValue : '';
 }
 
 function buildBottlesOwnerPanel(){
@@ -5700,6 +5793,7 @@ loadPinsFromSupabase();
 loadScheduleFromSupabase();
 loadFutTapsFromSupabase();
 loadBottlesListFromSupabase();
+loadBarmaidListFromSupabase();
 try{
   const savedTheme = localStorage.getItem('barTheme');
   if(savedTheme) applyTheme(savedTheme);
@@ -5716,10 +5810,16 @@ const loginBtn = document.getElementById('loginBtn');
 const loginError = document.getElementById('loginError');
 const logoutBtn = document.getElementById('logoutBtn');
 
-bartenders.forEach(name=>{
-  const opt = document.createElement('option'); opt.value = name; opt.textContent = name;
-  barmaidNameSelect.appendChild(opt);
-});
+function refreshBarmaidLoginDropdown(){
+  const currentValue = barmaidNameSelect.value;
+  barmaidNameSelect.innerHTML = '';
+  bartenders.forEach(name=>{
+    const opt = document.createElement('option'); opt.value = name; opt.textContent = name;
+    barmaidNameSelect.appendChild(opt);
+  });
+  if(bartenders.includes(currentValue)) barmaidNameSelect.value = currentValue;
+}
+refreshBarmaidLoginDropdown();
 function refreshBarmaidNameVisibility(){
   const show = roleSelect.value === 'barmaid';
   barmaidNameLabel.style.display = show ? 'block' : 'none';
