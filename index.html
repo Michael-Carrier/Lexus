@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.893</title>
+<title>Registre du bar</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -766,7 +766,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.0</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.2</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -2368,8 +2368,11 @@ function buildInventorySheet(){
       if(yesterday===undefined || today===undefined) return undefined; // still loading
       if(yesterday===null || today===null) return null; // genuinely no data
       const bucket = bucketFor(state.week, day);
-      const dayAjout = Number(bucket.bartDay?.stock?.[key]?.ajoutBeers)||0;
-      const nightAjout = Number(bucket.bartNight?.stock?.[key]?.ajoutBeers)||0;
+      // A shift marked "ignored" contributes nothing here — its Ajout is excluded
+      // entirely, leaving only Inventaire Journalier's own numbers (Hier, Aujourd'hui,
+      // and the janitor's Ajouté) to determine what sold that day.
+      const dayAjout = bucket.bartDay?.shiftIgnoredForCalc ? 0 : (Number(bucket.bartDay?.stock?.[key]?.ajoutBeers)||0);
+      const nightAjout = bucket.bartNight?.shiftIgnoredForCalc ? 0 : (Number(bucket.bartNight?.stock?.[key]?.ajoutBeers)||0);
       const janitorAjout = Number(bucket.inventaire?.[key]?.added)||0;
       return round2(yesterday - today + dayAjout + nightAjout + janitorAjout);
     });
@@ -2388,7 +2391,7 @@ function buildInventorySheet(){
   }
   const prevConfirmed = (prevWeekConfirmedStockCache.weekKey === prevWeekK) ? prevWeekConfirmedStockCache.confirmedStock : null;
 
-  const debutByItem = {}, startByItem = {}, finTopByItem = {};
+  const debutByItem = {}, startByItem = {}, finTopByItem = {}, finTopMissingDays = {};
   items.forEach(item=>{
     let debut = null;
     if(prevConfirmed){
@@ -2403,9 +2406,15 @@ function buildInventorySheet(){
     startByItem[item] = debut===null ? null : round2(debut + monday + thursday);
 
     const soldDays = soldByItem[item];
-    const weekSold = soldDays.some(v=>v===null||v===undefined) ? null
-                    : soldDays.reduce((s,v)=>s+(v||0),0);
-    finTopByItem[item] = (startByItem[item]===null || weekSold===null)
+    // A day still mid-fetch (cross-week Monday lookup) genuinely isn't known yet — that
+    // stays null/"?" so a flickering wrong number never briefly shows. A day that was
+    // simply never filled in is different: it counts as 0 sold, the total still
+    // calculates, and the missing days get named in the tooltip instead of blocking it.
+    const stillLoading = soldDays.some(v=>v===undefined);
+    const missingIdx = soldDays.map((v,i)=> v===null ? i : null).filter(i=>i!==null);
+    finTopMissingDays[item] = missingIdx.map(i=>dayNames[i]);
+    const weekSold = stillLoading ? undefined : soldDays.reduce((s,v)=>s+(v||0),0);
+    finTopByItem[item] = (startByItem[item]===null || weekSold===undefined)
       ? null : round2(startByItem[item] - weekSold);
   });
 
@@ -2445,7 +2454,18 @@ function buildInventorySheet(){
       else if(v===null) cellIn(g1,row,3+ci,'?','pg-unknown');
       else cellIn(g1,row,3+ci, v, 'pg-calc', 'Vendu ce jour-là = Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.');
     });
-    cellIn(g1,row,10, finTopByItem[item]===null?'?':finTopByItem[item], finTopByItem[item]===null?'pg-unknown':'pg-calc', 'Start moins le total Vendu de la semaine (somme des 7 jours).');
+    { // Fin — yellow + tooltip naming the missing days when some weren't filled in yet,
+      // rather than blocking on "?" until every single day is complete.
+      const missing = finTopMissingDays[item] || [];
+      const hasMissing = missing.length > 0 && finTopByItem[item] !== null;
+      const tooltip = finTopByItem[item] === null
+        ? 'Start moins le total Vendu de la semaine (somme des 7 jours).'
+        : hasMissing
+          ? `Compté avec ${missing.join(', ')} à 0 vendu — pas encore rempli(s). Start moins le total Vendu de la semaine.`
+          : 'Start moins le total Vendu de la semaine (somme des 7 jours).';
+      cellIn(g1,row,10, finTopByItem[item]===null?'?':finTopByItem[item],
+        finTopByItem[item]===null?'pg-unknown':(hasMissing?'pg-assumed':'pg-calc'), tooltip);
+    }
   });
   wrap.appendChild(g1);
 
@@ -3803,6 +3823,20 @@ function buildStockSection(shiftType, bucket, options){
     sub.className = 'sub';
     sub.textContent = "Début, Ajout (caisses × 24, éditable), Fin (nombre réel de bières dans le frigo), Total (Vendu, calculé automatiquement). Les tables grises de chaque côté montrent le quart voisin — rouge si ça ne concorde pas.";
     section.appendChild(sub);
+
+    // Escape hatch for a day where the shift's own counting genuinely wasn't reliable —
+    // #5 Beer Inventory then skips this shift's Ajout entirely for every item that day,
+    // and falls back to Inventaire Journalier's own before/after numbers instead.
+    const ignoreWrap = document.createElement('label');
+    ignoreWrap.className = 'no-print';
+    ignoreWrap.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:10px; font-size:0.9rem; color:var(--ink-soft); cursor:pointer;';
+    const ignoreCheck = document.createElement('input');
+    ignoreCheck.type = 'checkbox';
+    ignoreCheck.checked = !!store.shiftIgnoredForCalc;
+    ignoreCheck.addEventListener('change', ()=>{ store.shiftIgnoredForCalc = ignoreCheck.checked; });
+    ignoreWrap.appendChild(ignoreCheck);
+    ignoreWrap.appendChild(document.createTextNode('⚠ Ignorer ce quart pour les calculs (pas de comptage fiable ce jour-là)'));
+    section.appendChild(ignoreWrap);
   }
 
   // numOrZero is now a global function (see near roundInt) — empty/missing = 0.
@@ -5566,6 +5600,7 @@ function shiftRowToStore(row){
     needsReview: row.needs_review || false,
     stock: row.stock || {},
     fut: row.fut || {},
+    shiftIgnoredForCalc: row.shift_ignored_for_calc || false,
     interac: {
       total: row.interac_total ?? "", subtotal: row.interac_subtotal ?? "",
       tps: row.interac_tps ?? "", tvq: row.interac_tvq ?? ""
@@ -5598,6 +5633,7 @@ function storeToShiftRow(weekKey, day, shiftType, store){
     needs_review: !!store.needsReview,
     stock: store.stock || {},
     fut: store.fut || {},
+    shift_ignored_for_calc: !!store.shiftIgnoredForCalc,
     cash: store.cash || {}
   };
 }
