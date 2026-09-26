@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar</title>
+<title>Registre du bar v 2.895</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -753,6 +753,7 @@
       <option value="barmaid">Barmaid</option>
       <option value="janitor">Janitor</option>
       <option value="boss">Boss</option>
+      <option value="dev">Dev</option>
     </select>
     <label class="login-label" id="barmaidNameLabel" style="display:none;">Quelle barmaid?</label>
     <select id="barmaidNameSelect" style="display:none;"></select>
@@ -766,7 +767,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.2</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.3</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -845,7 +846,7 @@ const futPours = ['Shot', 'Buck', 'Verre', 'Pichet'];
 const inventaireItems = [
   {name:"Budweiser", expected:96}, {name:"Bud Light", expected:48},
   {name:"Bleu", expected:32}, {name:"Labatt 50", expected:24},
-  {name:"Mich. Ultra", expected:32}, {name:"Corona 0%", expected:24},
+  {name:"Mich. Ultra", expected:24}, {name:"Corona 0%", expected:24},
   {name:"Corona", expected:48}, {name:"White Claw", expected:40},
   {spacer:true}, {spacer:true},
   {spacer:true}, {name:"Smirnoff Ice", expected:8},
@@ -1078,19 +1079,20 @@ let state = {
   tab: "bartDay",
   subView: null, // null | 'stock' — only used within bartDay/bartNight
   pdfView: null, // name of the selected sheet in the Feuilles PDF tab, or null
-  role: null,    // null | 'barmaid' | 'janitor' | 'boss' — set after login
+  role: null,    // null | 'barmaid' | 'janitor' | 'boss' — set after login (Dev normalizes to 'boss' here)
+  loginRole: null, // the raw login selection before normalization — 'dev' stays 'dev' so Préférences changes the right PIN
   loggedInName: null // which barmaid, when role === 'barmaid'
 };
 
 // Placeholder PINs — one shared PIN per role for now. Real per-person accounts come later
 // (this is intentionally simple, per "we'll worry about protection later").
-const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333' };
+const rolePins = { barmaid: '1111', janitor: '2222', boss: '3333', dev: '4444' };
 const roleTabs = {
   barmaid: ['bartDay','bartNight','commander','bills','bottles'],
   janitor: ['inventaire'],
   boss: ['bartDay','bartNight','bottles','inventaire','delivery','misc','sunday','pdfSheets','schedule']
 };
-const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss' };
+const roleLabels = { barmaid: 'Barmaid', janitor: 'Janitor', boss: 'Boss', dev: 'Dev' };
 
 const themes = [
   { id:'jour', label:'☀️ Jour' },
@@ -2451,7 +2453,7 @@ function buildInventorySheet(){
     cellIn(g1,row,2, startByItem[item]===null?'?':startByItem[item], startByItem[item]===null?'pg-unknown':'pg-calc');
     soldByItem[item].forEach((v,ci)=>{
       if(v===undefined) cellIn(g1,row,3+ci,'...','pg-unknown');
-      else if(v===null) cellIn(g1,row,3+ci,'?','pg-unknown');
+      else if(v===null) cellIn(g1,row,3+ci, 0, 'pg-assumed', `${dayNames[ci]} pas encore rempli — compté comme 0 vendu.`);
       else cellIn(g1,row,3+ci, v, 'pg-calc', 'Vendu ce jour-là = Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.');
     });
     { // Fin — yellow + tooltip naming the missing days when some weren't filled in yet,
@@ -2491,13 +2493,18 @@ function buildInventorySheet(){
     const thursday = deliveryCases24(bucketFor(state.week,'Jeudi'), item);
     cellIn(g2,row,6, thursday===null?'?':round2(thursday), thursday===null?'pg-unknown':'pg-calc');
 
-    // Vendu mini-table, under Samedi/Dimanche — sum of the 7 daily Vendu values from the top table
+    // Vendu mini-table, under Samedi/Dimanche — running total of the 7 daily Vendu
+    // values above, treating any not-yet-filled day as 0 so the tally always shows a
+    // usable number rather than blocking on "?" until the whole week is complete.
     cellIn(g2,row,8,item,'pg-label');
     const perDay = soldByItem[item];
     const stillLoading = perDay.some(v=>v===undefined);
-    const anyUnknown = perDay.some(v=>v===null);
+    const missingDays = perDay.map((v,i)=> v===null ? dayNames[i] : null).filter(Boolean);
     const total = perDay.reduce((s,v)=> s+(v||0), 0);
-    cellIn(g2,row,9, stillLoading?'...':(anyUnknown?'?':round2(total)), (stillLoading||anyUnknown)?'pg-unknown':'pg-calc');
+    const totalTooltip = missingDays.length
+      ? `Compté avec ${missingDays.join(', ')} à 0 — pas encore rempli(s). Total roulant des jours déjà entrés.`
+      : 'Somme des 7 jours de Vendu.';
+    cellIn(g2,row,9, stillLoading?'...':round2(total), stillLoading?'pg-unknown':(missingDays.length?'pg-assumed':'pg-calc'), stillLoading?null:totalTooltip);
   });
   wrap.appendChild(g2);
 
@@ -5872,10 +5879,14 @@ function currentActiveShiftTab(){
 }
 
 async function attemptLogin(){
-  const role = roleSelect.value;
+  const enteredRole = roleSelect.value;
   const pin = pinInput.value;
-  if(pin === rolePins[role]){
+  if(pin === rolePins[enteredRole]){
+    // Dev is its own separate PIN with the exact same access as Boss — useful so it
+    // doesn't break if the actual owner ever changes the Boss PIN.
+    const role = enteredRole === 'dev' ? 'boss' : enteredRole;
     state.role = role;
+    state.loginRole = enteredRole; // the raw selection — kept separate so Préférences changes the right PIN
     state.loggedInName = (role === 'barmaid') ? barmaidNameSelect.value : null;
     state.tab = (role === 'barmaid') ? currentActiveShiftTab() : roleTabs[role][0];
     state.subView = null; state.pdfView = null;
@@ -5897,6 +5908,7 @@ loginBtn.addEventListener('click', attemptLogin);
 pinInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') attemptLogin(); });
 logoutBtn.addEventListener('click', ()=>{
   state.role = null;
+  state.loginRole = null;
   appShell.style.display = 'none';
   loginScreen.style.display = 'flex';
   pinInput.value = ''; loginError.textContent = '';
@@ -6067,7 +6079,7 @@ function renderThemeGrid(){
 }
 
 prefsBtn.addEventListener('click', ()=>{
-  prefsRoleName.textContent = roleLabels[state.role] || '';
+  prefsRoleName.textContent = roleLabels[state.loginRole || state.role] || '';
   newPinInput.value = ''; pinSaveMsg.textContent = '';
   renderThemeGrid();
   prefsModal.style.display = 'flex';
@@ -6080,9 +6092,10 @@ savePinBtn.addEventListener('click', async ()=>{
     pinSaveMsg.textContent = 'Le NIP doit avoir 4 à 6 chiffres.';
     return;
   }
-  rolePins[state.role] = val;
+  const pinRole = state.loginRole || state.role; // Dev changes its own PIN, not Boss's
+  rolePins[pinRole] = val;
   try{
-    await savePinToSupabase(state.role, val);
+    await savePinToSupabase(pinRole, val);
     pinSaveMsg.style.color = 'var(--ok)';
     pinSaveMsg.textContent = 'NIP mis à jour.';
   }catch(e){
