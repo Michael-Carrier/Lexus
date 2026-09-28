@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.896</title>
+<title>Registre du bar v 2.897</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -767,7 +767,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.4</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.5</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -866,7 +866,15 @@ const deliveryItems = [
   {spacer:true},
   {name:"White Claw"},
   {spacer:true},
-  {name:"Smirnoff"}
+  {name:"Smirnoff"},
+  {spacer:true},
+  // Everything else that's tracked on Inventaire Journalier, so a delivery of any of
+  // these can be logged the same way as beer. Appended at the end (never inserted
+  // earlier in the list) so every already-saved delivery row keeps its same index.
+  {name:"Red Bull"}, {name:"Rev"},
+  {spacer:true},
+  {name:"Eau"}, {name:"Perrier"}, {name:"Liqueur"}, {name:"Jus Clamato"},
+  {name:"Cup à Café"}, {name:"Chips"}, {name:"Gomme"}, {name:"Peanuts"}, {name:"Pepperoni"}
 ];
 
 // Order-taking prototype — reuses the same beer catalog as Inventaire/Stock so the
@@ -2649,7 +2657,7 @@ function buildOverallSheet(){
   const tt = computeWeekTransactionTotals(state.week);
   const block1Caisses = round2(tt.totJour + tt.totSoir);
   const factOverKnown = sun.factOver !== "" && sun.factOver !== undefined;
-  const block1Over = factOverKnown ? round2(tt.totOver + tt.meOver + Number(sun.factOver)) : null;
+  const block1Over = round2(tt.totOver + tt.meOver + (factOverKnown ? Number(sun.factOver) : 0));
   const block1Taxes = round2(tt.totTPS + tt.meTPS + tt.totTVQ + tt.meTVQ);
   const block1Interac = round2(tt.totInterac + tt.meInterac);
   const pk = computeWeekPokerTotals(state.week);
@@ -2660,14 +2668,30 @@ function buildOverallSheet(){
   const pinutsKnown = sun.pinutsTbxl !== "" && sun.pinutsTbxl !== undefined;
   const paieJaboinKnown = sun.paieJaboin !== "" && sun.paieJaboin !== undefined;
 
-  function unk(row, col, label, why){
-    cell(row, col, label, 'pg-label');
-    cell(row, col+1, 0, 'pg-assumed', (why || 'Aucune source de données définie pour ce champ.') + ' — compté comme 0');
-  }
   function known(row, col, label, value, tooltip){
     cell(row, col, label, 'pg-label');
     if(value===null) cell(row, col+1, 0, 'pg-assumed', (tooltip ? tooltip+' — ' : '') + 'pas encore rempli, compté comme 0');
     else cell(row, col+1, value, 'pg-calc', tooltip);
+  }
+  // Every total on this sheet is a sum/difference of several fields, some of which may
+  // not be filled in yet. Rather than the whole total collapsing to "?" when just one
+  // input is missing, each missing input is counted as 0 and named in the hover —
+  // the total always shows a real, usable number built from whatever IS known so far.
+  function sumParts(parts){
+    let total = 0; const missing = [];
+    parts.forEach(p=>{
+      total += Number(p.value)||0;
+      if(p.known===false) missing.push(p.label);
+    });
+    return { value: round2(total), missing };
+  }
+  function calcRow(row, col, label, result, baseTooltip){
+    cell(row, col, label, 'pg-label');
+    const isKnown = result.missing.length===0;
+    const tooltip = isKnown
+      ? baseTooltip
+      : `Compté avec ${result.missing.join(', ')} à 0 — pas encore rempli(s).` + (baseTooltip ? ' '+baseTooltip : '');
+    cell(row, col+1, result.value, isKnown?'pg-calc':'pg-assumed', tooltip);
   }
 
   // Top-right "Caisses" block — Caisses repeats block 1; Poker repeats block 2's Poker; Pool/Pinuts from #3 (Sunday);
@@ -2685,18 +2709,21 @@ function buildOverallSheet(){
   customLines.forEach((line, i)=>{
     known(8+i, 7, line.name, line.value===""?null:round2(Number(line.value)), 'Ligne personnalisée, ajoutée dans l\'onglet Misc.');
   });
-  const customLinesTotal = customLines.reduce((s,l)=> s + (l.value===""?0:Number(l.value)||0), 0);
-  const customLinesKnown = customLines.every(l => l.value !== "" && l.value !== undefined);
 
-  const topRightKnown = poolKnown && pinutsKnown && paieJaboinKnown && customLinesKnown;
-  const topRightTotal = topRightKnown ? round2(
-    block1Caisses + block2Poker + Number(sun.poolTbxl) + Number(sun.pinutsTbxl) + Number(sun.paieJaboin) + block1Taxes + customLinesTotal
-  ) : null;
+  const topRight = sumParts([
+    {label:'Caisses', value:block1Caisses, known:true},
+    {label:'Poker', value:block2Poker, known:true},
+    {label:'Pool', value:sun.poolTbxl, known:poolKnown},
+    {label:'Pinut', value:sun.pinutsTbxl, known:pinutsKnown},
+    {label:'Paie Jaboin', value:sun.paieJaboin, known:paieJaboinKnown},
+    {label:'Taxes', value:block1Taxes, known:true},
+    ...customLines.map(l=> ({label:l.name, value:l.value, known: l.value!=="" && l.value!==undefined}))
+  ]);
   const totalRow = 8 + customLines.length + 1;
-  known(totalRow,7,'Total', topRightTotal, 'Somme de tout ce qui précède : Caisses + Poker + Pool + Pinut + Paie Jaboin + Taxes' + (customLines.length ? ' + lignes personnalisées.' : '.'));
+  calcRow(totalRow,7,'Total', topRight, 'Somme de tout ce qui précède : Caisses + Poker + Pool + Pinut + Paie Jaboin + Taxes' + (customLines.length ? ' + lignes personnalisées.' : '.'));
 
   known(12,1,'Caisses', block1Caisses, 'Jour + Nuit de tous les quarts de la semaine (Bartend. Jour/Soir).');
-  known(13,1,'Over', block1Over, 'Over de tous les quarts + Fact. Over (onglet Misc., Section 1).');
+  calcRow(13,1,'Over', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Over de tous les quarts + Fact. Over (onglet Misc., Section 1).');
   known(14,1,'Taxes', block1Taxes, 'TPS + TVQ (Cash + Interac) de tous les quarts de la semaine.');
   known(15,1,'Interac', block1Interac, 'Total Interac de tous les quarts de la semaine.');
 
@@ -2710,18 +2737,23 @@ function buildOverallSheet(){
   known(15,5,'Guich Caiss', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
   known(16,5,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : null, 'Saisi dans l\'onglet Misc., Section 2 — distinct du Depot de l\'onglet Poker.');
   known(17,5,'Coup/Valid', round2(pk.machine), 'Machine — tickets trouvés dans les machines, somme de la semaine (onglet Poker).');
-  const resteKnown = topRightKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
-  const resteValue = resteKnown ? round2(
-    topRightTotal - Number(sun.factures) - block1Interac - pk.guichet - Number(sun.guichCaisses) - Number(sun.depotOverall) - pk.machine
-  ) : null;
-  known(19,5,'Reste', resteValue, 'Total (bloc du haut à droite) moins Facture, Interac, Guich Pok, Guich Caiss, Depot et Coup/Valid.');
+  const reste = sumParts([
+    {label:'Total (bloc du haut)', value:topRight.value, known: topRight.missing.length===0},
+    {label:'Facture', value: -(Number(sun.factures)||0), known:facturesKnown},
+    {label:'Interac', value:-block1Interac, known:true},
+    {label:'Guich Pok', value:-pk.guichet, known:true},
+    {label:'Guich Caiss', value:-(Number(sun.guichCaisses)||0), known:guichCaissesKnown},
+    {label:'Depot', value:-(Number(sun.depotOverall)||0), known:depotOverallKnown},
+    {label:'Coup/Valid', value:-pk.machine, known:true}
+  ]);
+  calcRow(19,5,'Reste', reste, 'Total (bloc du haut à droite) moins Facture, Interac, Guich Pok, Guich Caiss, Depot et Coup/Valid.');
 
   // Block 2 (lower-left): Caisses/Over Caisses repeat block 1; Poker/Over Poker from #1; Bouteilles/Autres from Sunday; Over Pool pinned.
   const bouteillesKnown = sun.bouteilles !== "" && sun.bouteilles !== undefined;
   const autresKnown = sun.autres !== "" && sun.autres !== undefined;
 
   known(19,1,'Caisses', block1Caisses, 'Répète le Caisses du bloc du haut.');
-  known(20,1,'Over Caisses', block1Over, 'Répète le Over du bloc du haut.');
+  calcRow(20,1,'Over Caisses', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Répète le Over du bloc du haut.');
   known(21,1,'Poker', block2Poker, 'Total inséré moins Total coupons/gains (onglet Poker) — la semaine entière.');
   known(22,1,'Over Poker', pk.overPoker, 'Over poker (D17) de la feuille #1 Poker/Lotto Summary.');
   known(23,1,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
@@ -2730,13 +2762,18 @@ function buildOverallSheet(){
   known(25,1,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null, 'Pool → Over (onglet Misc., sous-section Pool).');
   known(26,1,'Pinuts', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null, 'Pinuts → TXBL (onglet Misc.).');
   known(27,1,'Autres', autresKnown ? round2(Number(sun.autres)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
-  const lowerLeftKnown = block1Over!==null && bouteillesKnown && poolKnown && poolOverKnown && pinutsKnown && autresKnown;
-  const lowerLeftTotal = lowerLeftKnown ? round2(
-    block1Caisses + block1Over + block2Poker + pk.overPoker +
-    Number(sun.bouteilles) + Number(sun.poolTbxl) + Number(sun.poolOver) +
-    Number(sun.pinutsTbxl) + Number(sun.autres)
-  ) : null;
-  known(29,1,'Total', lowerLeftTotal, 'Somme des 9 lignes ci-dessus : Caisses + Over Caisses + Poker + Over Poker + Bouteilles + Pool + Over Pool + Pinuts + Autres.');
+  const lowerLeft = sumParts([
+    {label:'Caisses', value:block1Caisses, known:true},
+    {label:'Over', value:block1Over, known:factOverKnown},
+    {label:'Poker', value:block2Poker, known:true},
+    {label:'Over Poker', value:pk.overPoker, known:true},
+    {label:'Bouteilles', value:sun.bouteilles, known:bouteillesKnown},
+    {label:'Pool', value:sun.poolTbxl, known:poolKnown},
+    {label:'Over Pool', value:sun.poolOver, known:poolOverKnown},
+    {label:'Pinuts', value:sun.pinutsTbxl, known:pinutsKnown},
+    {label:'Autres', value:sun.autres, known:autresKnown}
+  ]);
+  calcRow(29,1,'Total', lowerLeft, 'Somme des 9 lignes ci-dessus : Caisses + Over Caisses + Poker + Over Poker + Bouteilles + Pool + Over Pool + Pinuts + Autres.');
 
   // Lower-right block: Over Poker/Over Caisses repeat other cells; Bouteilles reuses the same Sunday field;
   // Over Pool now comes from Sunday's new Pool section; Env from #3's Sunday-sourced ENV; Paye Dan new field.
@@ -2744,19 +2781,25 @@ function buildOverallSheet(){
   const payeDanKnown = sun.payeDan !== "" && sun.payeDan !== undefined;
 
   known(19,7,'Over Poker', pk.overPoker, 'Répète le Over Poker du bloc du bas à gauche (D17 de #1 Poker/Lotto Summary).');
-  known(20,7,'Over Caisses', block1Over, 'Répète le Over du bloc du haut.');
+  calcRow(20,7,'Over Caisses', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Répète le Over du bloc du haut.');
   known(21,7,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Même champ que Bouteilles du bloc du bas à gauche (onglet Misc.).');
   known(22,7,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null, 'Pool → Over (onglet Misc.).');
   known(23,7,'Reste Env', envKnown ? round2(Number(sun.env)) : null, 'ENV, saisi dans l\'onglet Misc., Section 1.');
-  const lowerRightTotKnown = poolOverKnown && bouteillesKnown && envKnown;
-  const lowerRightTot = lowerRightTotKnown ? round2(
-    pk.overPoker + block1Over + Number(sun.bouteilles) + Number(sun.poolOver) + Number(sun.env)
-  ) : null;
-  known(25,7,'Tot', lowerRightTot, 'Somme : Over Poker + Over Caisses + Bouteilles + Over Pool + Reste Env.');
+  const lowerRightTot = sumParts([
+    {label:'Over Poker', value:pk.overPoker, known:true},
+    {label:'Over Caisses', value:block1Over, known:factOverKnown},
+    {label:'Bouteilles', value:sun.bouteilles, known:bouteillesKnown},
+    {label:'Over Pool', value:sun.poolOver, known:poolOverKnown},
+    {label:'Reste Env', value:sun.env, known:envKnown}
+  ]);
+  calcRow(25,7,'Tot', lowerRightTot, 'Somme : Over Poker + Over Caisses + Bouteilles + Over Pool + Reste Env.');
   known(26,7,'Paye Dan', payeDanKnown ? round2(Number(sun.payeDan)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
-  const lowerRightReste = (lowerRightTot!==null && payeDanKnown) ? round2(lowerRightTot - Number(sun.payeDan)) : null;
-  known(28,7,'Reste', lowerRightReste, 'Tot (ci-dessus) moins Paye Dan.');
-  known(29,7,'Total', lowerRightReste, 'Même valeur que Reste — un terme du fichier original pointait vers une cellule vide et a été retiré.'); // the "+R15" term dropped — see the flag note
+  const lowerRightReste = sumParts([
+    {label:'Tot', value:lowerRightTot.value, known: lowerRightTot.missing.length===0},
+    {label:'Paye Dan', value: -(Number(sun.payeDan)||0), known:payeDanKnown}
+  ]);
+  calcRow(28,7,'Reste', lowerRightReste, 'Tot (ci-dessus) moins Paye Dan.');
+  calcRow(29,7,'Total', lowerRightReste, 'Même valeur que Reste — un terme du fichier original pointait vers une cellule vide et a été retiré.'); // the "+R15" term dropped — see the flag note
 
   wrap.appendChild(grid);
   const flagNote = document.createElement('div');
@@ -4163,7 +4206,22 @@ function buildStockSection(shiftType, bucket, options){
 
   const futTable = document.createElement('table');
   futTable.className = 'form-table';
-  futTable.innerHTML = `<thead><tr><th>Fût / Format</th><th>Début</th><th>Fin</th></tr></thead>`;
+  const futThead = document.createElement('thead');
+  const futHeadRow = document.createElement('tr');
+  const thName = document.createElement('th'); thName.textContent = 'Fût / Format';
+  const thDebut = document.createElement('th');
+  const thFin = document.createElement('th'); thFin.textContent = 'Fin';
+  const futAutoBtn = document.createElement('button');
+  futAutoBtn.type = 'button';
+  futAutoBtn.textContent = '↻ Auto';
+  futAutoBtn.title = "Re-remplit tous les Début à partir du quart précédent — utile si un chiffre tapé par erreur a coupé le remplissage automatique.";
+  futAutoBtn.className = 'print-btn no-print';
+  futAutoBtn.style.cssText = 'font-size:0.75rem; padding:3px 8px; margin-right:6px; vertical-align:middle;';
+  thDebut.appendChild(futAutoBtn);
+  thDebut.appendChild(document.createTextNode('Début'));
+  futHeadRow.appendChild(thName); futHeadRow.appendChild(thDebut); futHeadRow.appendChild(thFin);
+  futThead.appendChild(futHeadRow);
+  futTable.appendChild(futThead);
   const futBody = document.createElement('tbody');
 
   let futYesterdayNight = null; // only fetched for the Day shift (may cross into last week)
@@ -4181,6 +4239,27 @@ function buildStockSection(shiftType, bucket, options){
     }
     return numOrZero(bucket.bartDay?.fut?.[key]?.fin);
   }
+
+  futAutoBtn.addEventListener('click', ()=>{
+    let filled = 0, stillLoading = false;
+    futTaps.forEach((tap, tapIdx)=>{
+      futPours.forEach((pour, pourIdx)=>{
+        const key = `tap${tapIdx}_pour${pourIdx}`;
+        const auto = computeFutDebutSource(tapIdx, pourIdx);
+        if(auto === undefined){ stillLoading = true; return; }
+        if(!store.fut[key]) store.fut[key] = { debut:"", fin:"", debutManual:false };
+        store.fut[key].debut = auto;
+        store.fut[key].debutManual = false; // un-stick it so it keeps auto-updating again next time too
+        filled++;
+      });
+    });
+    if(stillLoading){
+      showSaveToast('Chargement du quart précédent en cours — réessaie dans un instant.', true);
+    } else {
+      showSaveToast(`✓ ${filled} Début re-rempli(s) automatiquement — n'oublie pas d'Enregistrer.`, false);
+    }
+    renderPanel();
+  });
 
   futTaps.forEach((tap, tapIdx)=>{
     const tapRow = document.createElement('tr');
