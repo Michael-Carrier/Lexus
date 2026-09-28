@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.895</title>
+<title>Registre du bar v 2.896</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -767,7 +767,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.3</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.4</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -2380,11 +2380,10 @@ function buildInventorySheet(){
     });
   });
 
-  // Start = Debut (previous week's confirmed Nouveau Total from Inventaire Journalier,
-  // confirmed on Sunday) + this week's Monday delivery + Thursday delivery.
-  // Fetched directly rather than assumed to already be in memory — that was the actual
-  // bug: it used to only work if that other week happened to already be loaded from
-  // unrelated navigation, which is exactly the "visit last week, then it works" symptom.
+  // Start = Debut + this week's Monday delivery + Thursday delivery.
+  // Debut itself comes from LAST week's own confirmed Fin (checkbox below, on this same
+  // sheet) — not from Inventaire Journalier anymore. If last week's Fin was never
+  // confirmed with that checkbox, Debut is simply assumed 0 (Start then = deliveries only).
   if(prevWeekConfirmedStockCache.weekKey !== prevWeekK){
     fetchWeekConfirmedStock(prevWeekK).then(stock=>{
       prevWeekConfirmedStockCache = { weekKey: prevWeekK, confirmedStock: stock };
@@ -2395,17 +2394,20 @@ function buildInventorySheet(){
 
   const debutByItem = {}, startByItem = {}, finTopByItem = {}, finTopMissingDays = {};
   items.forEach(item=>{
-    let debut = null;
+    let debut = 0;
+    let debutConfirmed = false;
     if(prevConfirmed){
       const idx = stockRowIndex(stockAliases[item]);
       if(idx !== -1 && prevConfirmed[`row${idx}`] !== undefined && prevConfirmed[`row${idx}`] !== ""){
         debut = Number(prevConfirmed[`row${idx}`]);
+        debutConfirmed = true;
       }
     }
     const monday = deliveryCases24(bucketFor(state.week,'Lundi'), item) || 0;
     const thursday = deliveryCases24(bucketFor(state.week,'Jeudi'), item) || 0;
     debutByItem[item] = debut;
-    startByItem[item] = debut===null ? null : round2(debut + monday + thursday);
+    debutByItem[item+'__confirmed'] = debutConfirmed;
+    startByItem[item] = round2(debut + monday + thursday);
 
     const soldDays = soldByItem[item];
     // A day still mid-fetch (cross-week Monday lookup) genuinely isn't known yet — that
@@ -2416,7 +2418,7 @@ function buildInventorySheet(){
     const missingIdx = soldDays.map((v,i)=> v===null ? i : null).filter(i=>i!==null);
     finTopMissingDays[item] = missingIdx.map(i=>dayNames[i]);
     const weekSold = stillLoading ? undefined : soldDays.reduce((s,v)=>s+(v||0),0);
-    finTopByItem[item] = (startByItem[item]===null || weekSold===undefined)
+    finTopByItem[item] = (weekSold===undefined)
       ? null : round2(startByItem[item] - weekSold);
   });
 
@@ -2450,7 +2452,12 @@ function buildInventorySheet(){
   items.forEach((item,i)=>{
     const row = 2+i;
     cellIn(g1,row,1,item,'pg-label');
-    cellIn(g1,row,2, startByItem[item]===null?'?':startByItem[item], startByItem[item]===null?'pg-unknown':'pg-calc');
+    { // Start — yellow when Debut wasn't confirmed from last week's Fin (assumed 0),
+      // so Start is then just this week's Monday + Thursday deliveries.
+      const confirmed = debutByItem[item+'__confirmed'];
+      cellIn(g1,row,2, startByItem[item], confirmed?'pg-calc':'pg-assumed',
+        confirmed?null:"Début de la semaine dernière pas confirmé — compté comme 0. Start = livraisons lundi+jeudi seulement.");
+    }
     soldByItem[item].forEach((v,ci)=>{
       if(v===undefined) cellIn(g1,row,3+ci,'...','pg-unknown');
       else if(v===null) cellIn(g1,row,3+ci, 0, 'pg-assumed', `${dayNames[ci]} pas encore rempli — compté comme 0 vendu.`);
@@ -2485,7 +2492,11 @@ function buildInventorySheet(){
   items.forEach((item,i)=>{
     const row = 2+i;
     cellIn(g2,row,1,item,'pg-label');
-    cellIn(g2,row,2, debutByItem[item]===null?'?':debutByItem[item], debutByItem[item]===null?'pg-unknown':'pg-calc'); // Debut
+    { // Debut — from last week's confirmed Fin, or assumed 0 if never confirmed there
+      const confirmed = debutByItem[item+'__confirmed'];
+      cellIn(g2,row,2, debutByItem[item], confirmed?'pg-calc':'pg-assumed',
+        confirmed?null:"Fin de la semaine dernière pas confirmé — compté comme 0.");
+    }
 
     const monday = deliveryCases24(bucketFor(state.week,'Lundi'), item);
     cellIn(g2,row,3, monday===null?'?':round2(monday), monday===null?'pg-unknown':'pg-calc');
@@ -2508,6 +2519,53 @@ function buildInventorySheet(){
   });
   wrap.appendChild(g2);
 
+  // Confirm this week's Fin as next week's Debut — an explicit opt-in checkbox instead of
+  // an automatic Sunday snapshot. Leaving it unchecked means next week's Debut is simply
+  // assumed 0 (Start there = Monday + Thursday deliveries only).
+  const sunSettings = weekBucket(state.week);
+  const alreadyConfirmed = !!sunSettings.confirmedEndOfWeekStock;
+  const confirmBox = document.createElement('div');
+  confirmBox.className = 'sub no-print';
+  confirmBox.style.marginTop = '16px';
+  confirmBox.style.display = 'flex';
+  confirmBox.style.alignItems = 'center';
+  confirmBox.style.gap = '8px';
+  const confirmInput = document.createElement('input');
+  confirmInput.type = 'checkbox';
+  confirmInput.id = 'confirmFinAsNextDebut';
+  confirmInput.checked = alreadyConfirmed;
+  const confirmLabel = document.createElement('label');
+  confirmLabel.htmlFor = 'confirmFinAsNextDebut';
+  confirmLabel.textContent = 'Confirmer ces Fin comme Début de la semaine prochaine';
+  confirmBox.appendChild(confirmInput);
+  confirmBox.appendChild(confirmLabel);
+  wrap.appendChild(confirmBox);
+
+  confirmInput.addEventListener('change', async ()=>{
+    confirmInput.disabled = true;
+    try{
+      if(confirmInput.checked){
+        const snapshot = {};
+        items.forEach(item=>{
+          const idx = stockRowIndex(stockAliases[item]);
+          if(idx === -1) return;
+          if(finTopByItem[item] === null || finTopByItem[item] === undefined) return; // still loading / unknown, skip
+          snapshot[`row${idx}`] = finTopByItem[item];
+        });
+        sunSettings.confirmedEndOfWeekStock = snapshot;
+        await saveConfirmedEndOfWeekStock(state.week, snapshot);
+      } else {
+        sunSettings.confirmedEndOfWeekStock = null;
+        await saveConfirmedEndOfWeekStock(state.week, null);
+      }
+      // Force next week's Debut lookup to refetch rather than keep a stale cached value.
+      prevWeekConfirmedStockCache = { weekKey: null, confirmedStock: null };
+      renderPanel();
+    } finally {
+      confirmInput.disabled = false;
+    }
+  });
+
   wrap.appendChild(buildBottomBar());
   return wrap;
 }
@@ -2522,8 +2580,20 @@ function buildOverallSheet(){
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
   const sun = weekBucket(state.week);
-  const staffList = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','Schneider'];
-  const nameMap2 = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'Schneider'};
+  // Staff columns are derived live: everyone currently on the roster, plus anyone who
+  // actually worked a saved shift this week (so a since-removed name still shows on
+  // weeks they really worked), plus Schneider ("Me") last. No hardcoded name list.
+  const staffSeen = new Set(bartenders);
+  dayNames.forEach(d=>{
+    const b = bucketFor(state.week, d);
+    ['bartDay','bartNight'].forEach(k=>{
+      const s = b[k];
+      if(s && s.bartender && s.bartender!=='Me') staffSeen.add(s.bartender);
+      if(s && s.hasSecondBartender && s.bartender2 && s.bartender2!=='Me') staffSeen.add(s.bartender2);
+    });
+  });
+  const staffList = [...staffSeen, 'Me'];
+  function staffDisplayName(n){ return n==='Me' ? 'Schneider' : n; }
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
@@ -2550,23 +2620,23 @@ function buildOverallSheet(){
     ['bartDay','bartNight'].forEach(k=>{
       const s = bucket[k];
       if(!s || !s.bartender) return;
-      const longName = nameMap2[s.bartender] || s.bartender;
-      if(!totals[longName]) return;
+      const key = s.bartender;
+      if(!totals[key]) return;
       const cash = s.cash||{}, interac = s.interac||{};
-      totals[longName].vente += (Number(s.jour)||0) + (Number(s.nuit)||0);
-      totals[longName].tax += (Number(cash.tps)||0)+(Number(cash.tvq)||0)+(Number(interac.tps)||0)+(Number(interac.tvq)||0);
-      totals[longName].heures += hoursBetween(s.start, s.end);
+      totals[key].vente += (Number(s.jour)||0) + (Number(s.nuit)||0);
+      totals[key].tax += (Number(cash.tps)||0)+(Number(cash.tvq)||0)+(Number(interac.tps)||0)+(Number(interac.tvq)||0);
+      totals[key].heures += hoursBetween(s.start, s.end);
     });
   });
 
   // Schneider's Vente/Semaine comes from Reading (Sunday tab), not Jour/Nuit — he doesn't use those fields.
   const readingKnown = sun.reading !== "" && sun.reading !== undefined;
-  totals['Schneider'].vente = round2(Number(sun.reading)||0);
+  totals['Me'].vente = round2(Number(sun.reading)||0);
 
   staffList.forEach((name,i)=>{
     const row = 3+i;
-    cell(row,1,name,'pg-label');
-    if(name==='Schneider' && !readingKnown){
+    cell(row,1,staffDisplayName(name),'pg-label');
+    if(name==='Me' && !readingKnown){
       cell(row,3, totals[name].vente, 'pg-assumed', 'Reading pas encore rempli — compté comme 0');
     } else {
       cell(row,3, round2(totals[name].vente), 'pg-calc');
@@ -2851,8 +2921,20 @@ function buildShiftSummarySheet(){
   `;
   wrap.querySelector('h2').appendChild(buildPrintButton());
 
-  const staffColumns = ['Val','Tanya','Maude','Anais','Stephanie','Claudine','ME'];
-  const nameMap = {Val:'Val', Tanya:'Tanya', Maude:'Maude', Anais:'Anais', Steph:'Stephanie', Claudine:'Claudine', Me:'ME'};
+  // Columns are derived live: current roster, plus anyone who actually worked a
+  // saved shift this week (covers a since-removed name on weeks they really worked),
+  // plus Schneider ("Me") last. No hardcoded name list to maintain.
+  const staffSeen4 = new Set(bartenders);
+  dayNames.forEach(d=>{
+    const b = bucketFor(state.week, d);
+    ['bartDay','bartNight'].forEach(k=>{
+      const s = b[k];
+      if(s && s.bartender && s.bartender!=='Me') staffSeen4.add(s.bartender);
+      if(s && s.hasSecondBartender && s.bartender2 && s.bartender2!=='Me') staffSeen4.add(s.bartender2);
+    });
+  });
+  const staffColumns = [...staffSeen4, 'Me'];
+  function shiftColDisplayName(n){ return n==='Me' ? 'ME' : n; }
 
   const dayRows = [
     {day:'Lundi',    label:'Lundi',    header:4,  entree:5,  sortie:6 },
@@ -2887,7 +2969,7 @@ function buildShiftSummarySheet(){
     grid.appendChild(d);
   }
 
-  staffColumns.forEach((name,i)=> cell(3, i+2, name, 'pg-header'));
+  staffColumns.forEach((name,i)=> cell(3, i+2, shiftColDisplayName(name), 'pg-header'));
 
   dayRows.forEach(dr=>{
     cell(dr.header, 1, dr.label, 'pg-day');
@@ -2898,8 +2980,7 @@ function buildShiftSummarySheet(){
     [['bartDay'],['bartNight']].forEach(([shiftKey])=>{
       const shift = bucket[shiftKey];
       if(!shift || !shift.bartender) return;
-      const longName = nameMap[shift.bartender] || shift.bartender;
-      const colIdx = staffColumns.indexOf(longName);
+      const colIdx = staffColumns.indexOf(shift.bartender);
       if(colIdx !== -1){
         cell(dr.entree, colIdx+2, shift.start || '', 'pg-calc');
         cell(dr.sortie, colIdx+2, shift.end || '', 'pg-calc');
@@ -2907,8 +2988,7 @@ function buildShiftSummarySheet(){
       }
       // Second bartender covering the same shift (e.g. a busy party night)
       if(shift.hasSecondBartender && shift.bartender2){
-        const longName2 = nameMap[shift.bartender2] || shift.bartender2;
-        const colIdx2 = staffColumns.indexOf(longName2);
+        const colIdx2 = staffColumns.indexOf(shift.bartender2);
         if(colIdx2 !== -1){
           cell(dr.entree, colIdx2+2, shift.start2 || '', 'pg-calc');
           cell(dr.sortie, colIdx2+2, shift.end2 || '', 'pg-calc');
@@ -2924,8 +3004,9 @@ function buildShiftSummarySheet(){
     cell(33, i+2, round2(h), 'pg-calc');
     grandTotal += h;
   });
-  cell(33, 10, round2(grandTotal), 'pg-calc');
-  cell(33, 11, 'total', 'pg-label');
+  const grandTotalCol = staffColumns.length + 3;
+  cell(33, grandTotalCol, round2(grandTotal), 'pg-calc');
+  cell(33, grandTotalCol+1, 'total', 'pg-label');
 
   wrap.appendChild(grid);
   wrap.appendChild(buildBottomBar());
@@ -4484,35 +4565,9 @@ function buildInventairePanel(options){
   const bottomBar = buildBottomBar();
   wrap.appendChild(bottomBar);
 
-  // Sunday only: Enregistrer also confirms this week's Nouveau Total as the official
-  // end-of-week counts — no separate button needed, matching every other page's pattern.
-  // Next week's Beer Inventory "Start" column reads directly from this.
-  if(state.day === 'Dimanche'){
-    const sun = weekBucket(state.week);
-    const already = !!sun.confirmedEndOfWeekStock;
-    const label = document.createElement('div');
-    label.className = 'sub';
-    label.style.marginTop = '10px';
-    label.textContent = already
-      ? '✓ Totaux de fin de semaine déjà confirmés — Enregistrer reconfirme avec les chiffres actuels.'
-      : "Fin de semaine : Enregistrer confirmera aussi ces totaux pour qu'ils deviennent le \"Start\" de la semaine prochaine sur Beer Inventory.";
-    wrap.appendChild(label);
-
-    const saveBtn = bottomBar.querySelector('button.primary');
-    saveBtn.addEventListener('click', async ()=>{
-      const snapshot = {};
-      inventaireItems.forEach((item, idx)=>{
-        if(item.spacer) return;
-        const key = `row${idx}`;
-        snapshot[key] = store[key].total;
-      });
-      sun.confirmedEndOfWeekStock = snapshot;
-      // The confirmation never rides in the general save payload (see storeToWeekSettingsRow),
-      // so it's written here as its own separate call — this just happens on the same click now.
-      await saveConfirmedEndOfWeekStock(state.week, snapshot);
-      renderPanel();
-    });
-  }
+  // Note: Beer Inventory's "Début" no longer comes from Inventaire Journalier's Sunday
+  // confirmation — that's now done from #5 Inventory Summary itself (a checkbox there
+  // confirms that week's own Fin as next week's Début). Saving here is just a normal save.
 
   return wrap;
 }
