@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Registre du bar v 2.897</title>
+<title>Registre du bar v 2.898</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -767,7 +767,7 @@
 <div id="appShell" style="display:none;">
 <header class="no-print" style="position:relative;">
   <h1 class="ui-font">Registre du bar — feuilles hebdomadaires</h1>
-  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.5</strong></p>
+  <p>Prototype hors-ligne — étape 2 (Supabase + AI) — <strong>v8.7</strong></p>
   <div style="margin-top:8px; display:flex; gap:10px; align-items:center;">
     <button id="logoutBtn" class="print-btn no-print">Changer de rôle</button>
     <button id="prefsBtn" class="print-btn no-print">Préférences</button>
@@ -1006,6 +1006,24 @@ const shiftConfig = {
 };
 
 function round2(n){ return Math.round(n*100)/100; }
+// Builds a plain "12 + 8 - 3 = 17" style line from an ordered list of numbers, for the
+// second line of a hover tooltip — the first line stays the word formula (unchanged),
+// this line shows the same formula with the actual numbers plugged in.
+function mathExpr(values, resultValue){
+  let str = '';
+  values.forEach((raw,i)=>{
+    const v = round2(Number(raw)||0);
+    if(i===0){ str += (v<0 ? '-'+Math.abs(v) : v); }
+    else { str += v<0 ? ` - ${Math.abs(v)}` : ` + ${v}`; }
+  });
+  str += ` = ${round2(resultValue)}`;
+  return str;
+}
+// Two-line hover: first line is the existing word formula (untouched), second line is
+// the same formula worked out with real numbers via mathExpr().
+function withMath(wordLine, values, resultValue){
+  return `${wordLine}\n${mathExpr(values, resultValue)}`;
+}
 // Converts to a number for saving to Supabase, but never sends NaN — an incomplete or
 // malformed entry (e.g. typing just "-" and moving on) becomes null instead of a value
 // that could make that whole row's upsert silently fail while other tables still save.
@@ -2266,33 +2284,37 @@ function buildAccountantSheet(){
   }
 
   row(1,'Caisses', totCash, 'total cash for the week net', 'pg-calc');
-  row(2,'Poker', pokerNet, 'Total Coupons – Total inserted', 'pg-calc');
+  row(2,'Poker', pokerNet, withMath('Total Coupons – Total inserted', [pk.inserted, -pk.coupons], pokerNet), 'pg-calc');
   knownRow(3,'Pool', poolKnown, sun.poolTbxl, 'Pool (from Overall Summary)');
   knownRow(4,'Pinut', pinutsKnown, sun.pinutsTbxl, 'Peanuts (from Overall Summary)');
   knownRow(5,'Paie Jabon', paieJaboinKnown, sun.paieJaboin, 'Misc (from Overall Summary)');
-  row(6,'Taxes', totTaxes, 'Taxes for the week (from Overall Summary)', 'pg-calc');
+  row(6,'Taxes', totTaxes, withMath('Taxes for the week (from Overall Summary)', [tt.totTPS, tt.meTPS, tt.totTVQ, tt.meTVQ], totTaxes), 'pg-calc');
 
   const totAllKnown = poolKnown && pinutsKnown && paieJaboinKnown;
   const totValue = round2(totCash + pokerNet + (Number(sun.poolTbxl)||0) + (Number(sun.pinutsTbxl)||0) + (Number(sun.paieJaboin)||0) + totTaxes);
   const totMissing = [!poolKnown&&'Pool', !pinutsKnown&&'Pinut', !paieJaboinKnown&&'Paie Jabon'].filter(Boolean);
   cell(8,1,'TOT','pg-day');
-  cell(8,2, totValue, totAllKnown?'pg-calc':'pg-assumed', totAllKnown?null:`Compté avec ${totMissing.join(', ')} à 0 — pas encore rempli`);
+  cell(8,2, totValue, totAllKnown?'pg-calc':'pg-assumed',
+    withMath((totAllKnown?'':`Compté avec ${totMissing.join(', ')} à 0 — pas encore rempli. `) + 'Caisses + Poker + Pool + Pinut + Paie Jabon + Taxes.',
+      [totCash, pokerNet, Number(sun.poolTbxl)||0, Number(sun.pinutsTbxl)||0, Number(sun.paieJaboin)||0, totTaxes], totValue));
 
   knownRow(10,'Facture', facturesKnown, sun.factures, 'Receipts Paid in Cash (from Overall Summary)');
-  row(11,'Interac', totInterac, 'Receipts paid in Interac (from Overall Summary)', 'pg-calc');
-  row(12,'Guich Poker', round2(pk.guichet), 'Amount put in the atm (from Overall Summary)', 'pg-calc');
+  row(11,'Interac', totInterac, withMath('Receipts paid in Interac (from Overall Summary)', [tt.totInterac, tt.meInterac], totInterac), 'pg-calc');
+  row(12,'Guich Poker', round2(pk.guichet), 'Amount put in the atm (from Overall Summary) — somme de la semaine, onglet Poker.', 'pg-calc');
   knownRow(13,'Guich Caisses', guichCaissesKnown, sun.guichCaisses, 'from Overall Summary');
   const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
   knownRow(14,'Depot', depotOverallKnown, sun.depotOverall, 'Deposit at bank (Misc., Section 2)');
-  row(15,'Coup/Valid', round2(pk.machine), 'Coupons that were inserted in the poker machines', 'pg-calc');
+  row(15,'Coup/Valid', round2(pk.machine), 'Coupons that were inserted in the poker machines — somme de la semaine, onglet Poker.', 'pg-calc');
 
   const resteAllKnown = totAllKnown && facturesKnown && guichCaissesKnown && depotOverallKnown;
   const resteValue = round2(
     totValue - (Number(sun.factures)||0) - totInterac - pk.guichet - (Number(sun.guichCaisses)||0) - (Number(sun.depotOverall)||0) - pk.machine
   );
   const resteMissing = [...totMissing, !facturesKnown&&'Facture', !guichCaissesKnown&&'Guich Caisses', !depotOverallKnown&&'Depot'].filter(Boolean);
-  cell(17,1,'Reste','pg-day'); cell(17,2, resteValue, resteAllKnown?'pg-calc':'pg-assumed',
-    (resteAllKnown ? '' : `Compté avec ${resteMissing.join(', ')} à 0 — pas encore rempli. `) + 'TOT moins Facture, Interac, Guich Poker, Guich Caisses, Depot et Coup/Valid.');
+  cell(17,1,'Reste','pg-day');
+  cell(17,2, resteValue, resteAllKnown?'pg-calc':'pg-assumed',
+    withMath((resteAllKnown ? '' : `Compté avec ${resteMissing.join(', ')} à 0 — pas encore rempli. `) + 'TOT moins Facture, Interac, Guich Poker, Guich Caisses, Depot et Coup/Valid.',
+      [totValue, -(Number(sun.factures)||0), -totInterac, -pk.guichet, -(Number(sun.guichCaisses)||0), -(Number(sun.depotOverall)||0), -pk.machine], resteValue));
 
   wrap.appendChild(grid);
 
@@ -2367,9 +2389,11 @@ function buildInventorySheet(){
   }
 
   const soldByItem = {};
+  const soldComponents = {}; // per item, per day: {yesterday, today, dayAjout, nightAjout, janitorAjout} — for the hover math line
   items.forEach(item=>{
     const idx = stockRowIndex(stockAliases[item]);
     const key = `row${idx}`;
+    soldComponents[item] = [];
     soldByItem[item] = dayNames.map((day,i)=>{
       if(idx===-1) return null;
       const [yWeek, yDay] = i===0 ? [prevWeekK,'Dimanche'] : [state.week, dayNames[i-1]];
@@ -2384,7 +2408,9 @@ function buildInventorySheet(){
       const dayAjout = bucket.bartDay?.shiftIgnoredForCalc ? 0 : (Number(bucket.bartDay?.stock?.[key]?.ajoutBeers)||0);
       const nightAjout = bucket.bartNight?.shiftIgnoredForCalc ? 0 : (Number(bucket.bartNight?.stock?.[key]?.ajoutBeers)||0);
       const janitorAjout = Number(bucket.inventaire?.[key]?.added)||0;
-      return round2(yesterday - today + dayAjout + nightAjout + janitorAjout);
+      const v = round2(yesterday - today + dayAjout + nightAjout + janitorAjout);
+      soldComponents[item][i] = {yesterday, today, dayAjout, nightAjout, janitorAjout};
+      return v;
     });
   });
 
@@ -2463,23 +2489,33 @@ function buildInventorySheet(){
     { // Start — yellow when Debut wasn't confirmed from last week's Fin (assumed 0),
       // so Start is then just this week's Monday + Thursday deliveries.
       const confirmed = debutByItem[item+'__confirmed'];
+      const monday = deliveryCases24(bucketFor(state.week,'Lundi'), item) || 0;
+      const thursday = deliveryCases24(bucketFor(state.week,'Jeudi'), item) || 0;
+      const wordLine = confirmed
+        ? 'Début + livraison lundi + livraison jeudi.'
+        : "Début de la semaine dernière pas confirmé — compté comme 0. Start = livraisons lundi+jeudi seulement.";
       cellIn(g1,row,2, startByItem[item], confirmed?'pg-calc':'pg-assumed',
-        confirmed?null:"Début de la semaine dernière pas confirmé — compté comme 0. Start = livraisons lundi+jeudi seulement.");
+        withMath(wordLine, [debutByItem[item], monday, thursday], startByItem[item]));
     }
     soldByItem[item].forEach((v,ci)=>{
       if(v===undefined) cellIn(g1,row,3+ci,'...','pg-unknown');
       else if(v===null) cellIn(g1,row,3+ci, 0, 'pg-assumed', `${dayNames[ci]} pas encore rempli — compté comme 0 vendu.`);
-      else cellIn(g1,row,3+ci, v, 'pg-calc', 'Vendu ce jour-là = Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.');
+      else {
+        const c = soldComponents[item][ci];
+        cellIn(g1,row,3+ci, v, 'pg-calc',
+          withMath('Vendu ce jour-là = Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.',
+            [c.yesterday, -c.today, c.dayAjout, c.nightAjout, c.janitorAjout], v));
+      }
     });
     { // Fin — yellow + tooltip naming the missing days when some weren't filled in yet,
       // rather than blocking on "?" until every single day is complete.
       const missing = finTopMissingDays[item] || [];
       const hasMissing = missing.length > 0 && finTopByItem[item] !== null;
-      const tooltip = finTopByItem[item] === null
-        ? 'Start moins le total Vendu de la semaine (somme des 7 jours).'
-        : hasMissing
-          ? `Compté avec ${missing.join(', ')} à 0 vendu — pas encore rempli(s). Start moins le total Vendu de la semaine.`
-          : 'Start moins le total Vendu de la semaine (somme des 7 jours).';
+      const wordLine = hasMissing
+        ? `Compté avec ${missing.join(', ')} à 0 vendu — pas encore rempli(s). Start moins le total Vendu de la semaine.`
+        : 'Start moins le total Vendu de la semaine (somme des 7 jours).';
+      const weekSoldNow = soldByItem[item].reduce((s,v)=>s+(v||0),0);
+      const tooltip = finTopByItem[item] === null ? wordLine : withMath(wordLine, [startByItem[item], -weekSoldNow], finTopByItem[item]);
       cellIn(g1,row,10, finTopByItem[item]===null?'?':finTopByItem[item],
         finTopByItem[item]===null?'pg-unknown':(hasMissing?'pg-assumed':'pg-calc'), tooltip);
     }
@@ -2520,9 +2556,10 @@ function buildInventorySheet(){
     const stillLoading = perDay.some(v=>v===undefined);
     const missingDays = perDay.map((v,i)=> v===null ? dayNames[i] : null).filter(Boolean);
     const total = perDay.reduce((s,v)=> s+(v||0), 0);
-    const totalTooltip = missingDays.length
+    const totalWordLine = missingDays.length
       ? `Compté avec ${missingDays.join(', ')} à 0 — pas encore rempli(s). Total roulant des jours déjà entrés.`
       : 'Somme des 7 jours de Vendu.';
+    const totalTooltip = stillLoading ? null : withMath(totalWordLine, perDay.map(v=>v||0), round2(total));
     cellIn(g2,row,9, stillLoading?'...':round2(total), stillLoading?'pg-unknown':(missingDays.length?'pg-assumed':'pg-calc'), stillLoading?null:totalTooltip);
   });
   wrap.appendChild(g2);
@@ -2664,14 +2701,27 @@ function buildOverallSheet(){
   // Poker's "Net" is a separate number the owner tracks independently (feeds the LottoQ/Club
   // split on #1) — it is NOT Inserted minus Coupons. This "Poker" figure is that raw difference.
   const block2Poker = round2(pk.inserted - pk.coupons);
+  // Reused by all three "Over"/"Over Caisses" cells below, so the parts (and thus the
+  // numeric hover line) are built once here.
+  const block1OverResult = {
+    value: block1Over,
+    missing: factOverKnown ? [] : ['Fact. Over'],
+    parts: [
+      {label:'Over (quarts)', value: round2(tt.totOver + tt.meOver)},
+      {label:'Fact. Over', value: factOverKnown ? Number(sun.factOver) : 0}
+    ]
+  };
   const poolKnown = sun.poolTbxl !== "" && sun.poolTbxl !== undefined;
   const pinutsKnown = sun.pinutsTbxl !== "" && sun.pinutsTbxl !== undefined;
   const paieJaboinKnown = sun.paieJaboin !== "" && sun.paieJaboin !== undefined;
 
-  function known(row, col, label, value, tooltip){
+  // known()'s optional mathValues lets a single-formula value (e.g. Poker = inserted −
+  // coupons) show the real numbers on a second tooltip line, same as calcRow below.
+  function known(row, col, label, value, tooltip, mathValues){
     cell(row, col, label, 'pg-label');
+    const finalTooltip = (mathValues && value!==null) ? withMath(tooltip, mathValues, value) : tooltip;
     if(value===null) cell(row, col+1, 0, 'pg-assumed', (tooltip ? tooltip+' — ' : '') + 'pas encore rempli, compté comme 0');
-    else cell(row, col+1, value, 'pg-calc', tooltip);
+    else cell(row, col+1, value, 'pg-calc', finalTooltip);
   }
   // Every total on this sheet is a sum/difference of several fields, some of which may
   // not be filled in yet. Rather than the whole total collapsing to "?" when just one
@@ -2683,14 +2733,15 @@ function buildOverallSheet(){
       total += Number(p.value)||0;
       if(p.known===false) missing.push(p.label);
     });
-    return { value: round2(total), missing };
+    return { value: round2(total), missing, parts };
   }
   function calcRow(row, col, label, result, baseTooltip){
     cell(row, col, label, 'pg-label');
     const isKnown = result.missing.length===0;
-    const tooltip = isKnown
-      ? baseTooltip
-      : `Compté avec ${result.missing.join(', ')} à 0 — pas encore rempli(s).` + (baseTooltip ? ' '+baseTooltip : '');
+    const missingNote = isKnown ? '' : `Compté avec ${result.missing.join(', ')} à 0 — pas encore rempli(s). `;
+    const wordLine = missingNote + baseTooltip;
+    const math = mathExpr(result.parts.map(p=>p.value), result.value);
+    const tooltip = `${wordLine}\n${math}`;
     cell(row, col+1, result.value, isKnown?'pg-calc':'pg-assumed', tooltip);
   }
 
@@ -2699,11 +2750,11 @@ function buildOverallSheet(){
   // plus any custom lines the owner added on Misc. (rare, but they do come up occasionally).
   cell(2,7,'Caisses','pg-header');
   cell(2,8, block1Caisses, 'pg-calc', 'Caisses de la semaine — Jour + Nuit de tous les quarts (répète le bloc du bas à gauche).'); // the header row itself also holds the Caisses value, per the real file
-  known(3,7,'Poker', block2Poker, 'Total inséré (poker) moins Total coupons/gains de la semaine — même valeur que le "Poker" du bloc du bas à gauche.');
+  known(3,7,'Poker', block2Poker, 'Total inséré (poker) moins Total coupons/gains de la semaine — même valeur que le "Poker" du bloc du bas à gauche.', [pk.inserted, -pk.coupons]);
   known(4,7,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null, 'Pool → TXBL, saisi dans l\'onglet Misc., section Pool.');
   known(5,7,'Pinut', pinutsKnown ? round2(Number(sun.pinutsTbxl)) : null, 'Pinuts → TXBL, saisi dans l\'onglet Misc.');
   known(6,7,'Paie Jaboin', paieJaboinKnown ? round2(Number(sun.paieJaboin)) : null, 'Valeur par défaut -350, éditable dans l\'onglet Misc., Section 2.');
-  known(7,7,'Taxes', block1Taxes, 'TPS + TVQ de tous les quarts de la semaine — même valeur que "Taxes" du bloc du haut à gauche.');
+  known(7,7,'Taxes', block1Taxes, 'TPS + TVQ de tous les quarts de la semaine — même valeur que "Taxes" du bloc du haut à gauche.', [tt.totTPS, tt.meTPS, tt.totTVQ, tt.meTVQ]);
 
   const customLines = (sun.customLines || []).filter(l => l.name && l.name.trim() !== "");
   customLines.forEach((line, i)=>{
@@ -2723,16 +2774,16 @@ function buildOverallSheet(){
   calcRow(totalRow,7,'Total', topRight, 'Somme de tout ce qui précède : Caisses + Poker + Pool + Pinut + Paie Jaboin + Taxes' + (customLines.length ? ' + lignes personnalisées.' : '.'));
 
   known(12,1,'Caisses', block1Caisses, 'Jour + Nuit de tous les quarts de la semaine (Bartend. Jour/Soir).');
-  calcRow(13,1,'Over', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Over de tous les quarts + Fact. Over (onglet Misc., Section 1).');
-  known(14,1,'Taxes', block1Taxes, 'TPS + TVQ (Cash + Interac) de tous les quarts de la semaine.');
-  known(15,1,'Interac', block1Interac, 'Total Interac de tous les quarts de la semaine.');
+  calcRow(13,1,'Over', block1OverResult, 'Over de tous les quarts + Fact. Over (onglet Misc., Section 1).');
+  known(14,1,'Taxes', block1Taxes, 'TPS + TVQ (Cash + Interac) de tous les quarts de la semaine.', [tt.totTPS, tt.meTPS, tt.totTVQ, tt.meTVQ]);
+  known(15,1,'Interac', block1Interac, 'Total Interac de tous les quarts de la semaine.', [tt.totInterac, tt.meInterac]);
 
   // Middle-right block: Reste = the top-right block's Total, minus everything above it here.
   const facturesKnown = sun.factures !== "" && sun.factures !== undefined;
   const guichCaissesKnown = sun.guichCaisses !== "" && sun.guichCaisses !== undefined;
   const depotOverallKnown = sun.depotOverall !== "" && sun.depotOverall !== undefined;
   known(12,5,'Facture', facturesKnown ? round2(Number(sun.factures)) : null, 'Saisi dans l\'onglet Misc., Section 1 (Factures).');
-  known(13,5,'Interac', block1Interac, 'Même valeur que "Interac" du bloc du haut à gauche.');
+  known(13,5,'Interac', block1Interac, 'Même valeur que "Interac" du bloc du haut à gauche.', [tt.totInterac, tt.meInterac]);
   known(14,5,'Guich Pok', round2(pk.guichet), 'Guichet — somme de la semaine, depuis l\'onglet Poker (#1 Poker/Lotto Summary).');
   known(15,5,'Guich Caiss', guichCaissesKnown ? round2(Number(sun.guichCaisses)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
   known(16,5,'Depot', depotOverallKnown ? round2(Number(sun.depotOverall)) : null, 'Saisi dans l\'onglet Misc., Section 2 — distinct du Depot de l\'onglet Poker.');
@@ -2753,8 +2804,8 @@ function buildOverallSheet(){
   const autresKnown = sun.autres !== "" && sun.autres !== undefined;
 
   known(19,1,'Caisses', block1Caisses, 'Répète le Caisses du bloc du haut.');
-  calcRow(20,1,'Over Caisses', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Répète le Over du bloc du haut.');
-  known(21,1,'Poker', block2Poker, 'Total inséré moins Total coupons/gains (onglet Poker) — la semaine entière.');
+  calcRow(20,1,'Over Caisses', block1OverResult, 'Répète le Over du bloc du haut.');
+  known(21,1,'Poker', block2Poker, 'Total inséré moins Total coupons/gains (onglet Poker) — la semaine entière.', [pk.inserted, -pk.coupons]);
   known(22,1,'Over Poker', pk.overPoker, 'Over poker (D17) de la feuille #1 Poker/Lotto Summary.');
   known(23,1,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Saisi dans l\'onglet Misc., Section 2.');
   known(24,1,'Pool', poolKnown ? round2(Number(sun.poolTbxl)) : null, 'Pool → TXBL (onglet Misc.).');
@@ -2781,7 +2832,7 @@ function buildOverallSheet(){
   const payeDanKnown = sun.payeDan !== "" && sun.payeDan !== undefined;
 
   known(19,7,'Over Poker', pk.overPoker, 'Répète le Over Poker du bloc du bas à gauche (D17 de #1 Poker/Lotto Summary).');
-  calcRow(20,7,'Over Caisses', {value:block1Over, missing: factOverKnown?[]:['Fact. Over']}, 'Répète le Over du bloc du haut.');
+  calcRow(20,7,'Over Caisses', block1OverResult, 'Répète le Over du bloc du haut.');
   known(21,7,'Bouteilles', bouteillesKnown ? round2(Number(sun.bouteilles)) : null, 'Même champ que Bouteilles du bloc du bas à gauche (onglet Misc.).');
   known(22,7,'Over Pool', poolOverKnown ? round2(Number(sun.poolOver)) : null, 'Pool → Over (onglet Misc.).');
   known(23,7,'Reste Env', envKnown ? round2(Number(sun.env)) : null, 'ENV, saisi dans l\'onglet Misc., Section 1.');
@@ -2856,6 +2907,7 @@ function buildTransactionSheet(){
 
   // Weekly running totals
   let totJour=0, totSoir=0, totOver=0, totTPS=0, totTVQ=0, totInterac=0, totArgent=0;
+  const jourVals=[], soirVals=[], overVals=[], tpsVals=[], tvqVals=[], intVals=[], argentVals=[];
 
   function shiftRow(bucket, shiftKey, row){
     const s = bucket[shiftKey];
@@ -2876,10 +2928,12 @@ function buildTransactionSheet(){
     cell(row, 5, tps, 'pg-calc');
     cell(row, 6, tvq, 'pg-calc');
     cell(row, 7, int, 'pg-calc');
-    cell(row, 8, argent, 'pg-calc');
+    cell(row, 8, argent, 'pg-calc', withMath('Jour + Soir + Over + TPS + TVQ − Interac.', [jour,soir,over,tps,tvq,-int], argent));
 
     totJour += jour; totSoir += soir; totOver += over; totTPS += tps; totTVQ += tvq;
     totInterac += int; totArgent += argent;
+    jourVals.push(jour); soirVals.push(soir); overVals.push(over); tpsVals.push(tps);
+    tvqVals.push(tvq); intVals.push(int); argentVals.push(argent);
   }
 
   dayRows.forEach(dr=>{
@@ -2906,6 +2960,7 @@ function buildTransactionSheet(){
     });
   });
   const readingKnown = sun.reading !== "" && sun.reading !== undefined;
+  const meArgentTooltip = 'Reading + Over + TPS + TVQ − Interac (bloc Schneider).';
   const meArgent = round2((Number(sun.reading)||0) + meOver + meTPS + meTVQ - meInterac);
 
   cell(17,10,'Schneider','pg-header');
@@ -2914,17 +2969,22 @@ function buildTransactionSheet(){
   cell(20,9,'TPS','pg-label');     cell(20,10, round2(meTPS), 'pg-calc');
   cell(21,9,'TVQ','pg-label');     cell(21,10, round2(meTVQ), 'pg-calc');
   cell(22,9,'Interac','pg-label'); cell(22,10, round2(meInterac), 'pg-calc');
-  cell(23,9,'Argent','pg-label');  cell(23,10, meArgent, readingKnown?'pg-calc':'pg-assumed', readingKnown?null:'Compté avec Reading à 0 — pas encore rempli');
+  cell(23,9,'Argent','pg-label');
+  cell(23,10, meArgent, readingKnown?'pg-calc':'pg-assumed',
+    withMath(readingKnown ? meArgentTooltip : `Compté avec Reading à 0 — pas encore rempli. ${meArgentTooltip}`,
+      [Number(sun.reading)||0, meOver, meTPS, meTVQ, -meInterac], meArgent));
 
   // TOTAL row (row 25) — matches the real formulas, folding in the Schneider block for D-H.
   cell(25,1,'Total','pg-day');
-  cell(25,2, round2(totJour), 'pg-calc');
-  cell(25,3, round2(totSoir), 'pg-calc');
-  cell(25,4, round2(totOver + meOver), 'pg-calc');
-  cell(25,5, round2(totTPS + meTPS), 'pg-calc');
-  cell(25,6, round2(totTVQ + meTVQ), 'pg-calc');
-  cell(25,7, round2(totInterac + meInterac), 'pg-calc');
-  cell(25,8, round2(totArgent + meArgent), readingKnown ? 'pg-calc' : 'pg-assumed', readingKnown?null:'Compté avec Reading à 0 — pas encore rempli');
+  cell(25,2, round2(totJour), 'pg-calc', withMath('Somme de la colonne Jour, tous les quarts de la semaine.', jourVals, totJour));
+  cell(25,3, round2(totSoir), 'pg-calc', withMath('Somme de la colonne Soir, tous les quarts de la semaine.', soirVals, totSoir));
+  cell(25,4, round2(totOver + meOver), 'pg-calc', withMath('Somme de la colonne Over (tous les quarts) + Over de Schneider.', [...overVals, meOver], round2(totOver+meOver)));
+  cell(25,5, round2(totTPS + meTPS), 'pg-calc', withMath('Somme de la colonne TPS (tous les quarts) + TPS de Schneider.', [...tpsVals, meTPS], round2(totTPS+meTPS)));
+  cell(25,6, round2(totTVQ + meTVQ), 'pg-calc', withMath('Somme de la colonne TVQ (tous les quarts) + TVQ de Schneider.', [...tvqVals, meTVQ], round2(totTVQ+meTVQ)));
+  cell(25,7, round2(totInterac + meInterac), 'pg-calc', withMath('Somme de la colonne Interac (tous les quarts) + Interac de Schneider.', [...intVals, meInterac], round2(totInterac+meInterac)));
+  cell(25,8, round2(totArgent + meArgent), readingKnown ? 'pg-calc' : 'pg-assumed',
+    withMath(readingKnown ? 'Somme de la colonne Argent (tous les quarts) + Argent de Schneider.' : 'Compté avec Reading à 0 — pas encore rempli. Somme de la colonne Argent (tous les quarts) + Argent de Schneider.',
+      [...argentVals, meArgent], round2(totArgent+meArgent)));
 
   // Top-right block — pulled from the Sunday tab
   function sunCell(row, col, key, label){
@@ -2999,6 +3059,7 @@ function buildShiftSummarySheet(){
   }
 
   const totals = staffColumns.map(()=>0);
+  const totalsBreakdown = staffColumns.map(()=>[]); // per-column list of {day, hours} for the hover math line
 
   const grid = document.createElement('div');
   grid.className = 'poker-grid';
@@ -3027,7 +3088,9 @@ function buildShiftSummarySheet(){
       if(colIdx !== -1){
         cell(dr.entree, colIdx+2, shift.start || '', 'pg-calc');
         cell(dr.sortie, colIdx+2, shift.end || '', 'pg-calc');
-        totals[colIdx] += hoursBetween(shift.start, shift.end);
+        const h = hoursBetween(shift.start, shift.end);
+        totals[colIdx] += h;
+        if(h) totalsBreakdown[colIdx].push({day:dr.day, hours:h});
       }
       // Second bartender covering the same shift (e.g. a busy party night)
       if(shift.hasSecondBartender && shift.bartender2){
@@ -3035,7 +3098,9 @@ function buildShiftSummarySheet(){
         if(colIdx2 !== -1){
           cell(dr.entree, colIdx2+2, shift.start2 || '', 'pg-calc');
           cell(dr.sortie, colIdx2+2, shift.end2 || '', 'pg-calc');
-          totals[colIdx2] += hoursBetween(shift.start2, shift.end2);
+          const h2 = hoursBetween(shift.start2, shift.end2);
+          totals[colIdx2] += h2;
+          if(h2) totalsBreakdown[colIdx2].push({day:dr.day, hours:h2});
         }
       }
     });
@@ -3044,11 +3109,15 @@ function buildShiftSummarySheet(){
   cell(33, 1, 'Total', 'pg-label');
   let grandTotal = 0;
   totals.forEach((h,i)=>{
-    cell(33, i+2, round2(h), 'pg-calc');
+    const breakdown = totalsBreakdown[i];
+    const tooltip = breakdown.length
+      ? withMath(`Heures additionnées : ${breakdown.map(b=>b.day).join(', ')}.`, breakdown.map(b=>b.hours), round2(h))
+      : null;
+    cell(33, i+2, round2(h), 'pg-calc', tooltip);
     grandTotal += h;
   });
   const grandTotalCol = staffColumns.length + 3;
-  cell(33, grandTotalCol, round2(grandTotal), 'pg-calc');
+  cell(33, grandTotalCol, round2(grandTotal), 'pg-calc', withMath('Somme des heures de tout le monde cette semaine.', totals, round2(grandTotal)));
   cell(33, grandTotalCol+1, 'total', 'pg-label');
 
   wrap.appendChild(grid);
@@ -3150,7 +3219,9 @@ function buildPokerSheet(){
     const win = Number(b.misc?.coupons)||0;
     const inserted = Number(b.misc?.total)||0;
     const net = Number(b.misc?.net)||0;
-    return { day:d, win, inserted, net };
+    const machine = Number(b.misc?.machine)||0;
+    const guichet = Number(b.misc?.guichet)||0;
+    return { day:d, win, inserted, net, machine, guichet };
   });
   const wk = computeWeekPokerFull(state.week);
   const B12 = wk.B12, F12 = wk.F12, B14 = wk.B14, B15 = wk.B15, B16 = wk.B16;
@@ -3192,28 +3263,35 @@ function buildPokerSheet(){
     cell(row,2,r.win,'pg-calc', 'Coupons/Win de la journée — onglet Poker.');
     cell(row,5,r.day,'pg-label');
     cell(row,6,r.inserted,'pg-calc', 'Total inséré de la journée — onglet Poker.');
-    cell(row,7,r.net,'pg-calc', 'Net = Inséré − Coupons/Win, pour cette journée.');
+    cell(row,7,r.net,'pg-calc', 'Net — saisi directement sur l\'onglet Poker (Détails du jour), indépendant du calcul Inséré − Coupons/Win.');
   });
   cell(5,8,'-','pg-label'); cell(5,9,'Coupons','pg-label'); cell(5,10,J5,'pg-calc', 'Total Coupons/Win de la semaine (B12).');
   cell(6,8,'=','pg-label'); cell(6,9,'Depot','pg-label'); cell(6,10,J6, wk.depotKnown?'pg-calc':'pg-assumed', wk.depotKnown?'Saisi manuellement sur l\'onglet Poker, une fois par semaine.':'Pas encore rempli — compté comme 0');
-  cell(8,9,'Reste','pg-label'); cell(8,10,J8, wk.depotKnown?'pg-calc':'pg-assumed', 'Total (B17) moins Coupons/Win (B12) moins Depot.' + (wk.depotKnown?'':' Compté avec Depot à 0.'));
-  cell(10,9,'Over','pg-label'); cell(10,10,J10,'pg-calc', 'Over poker (D17) = Total (B17) moins Total inséré (F12).');
+  cell(8,9,'Reste','pg-label');
+  cell(8,10,J8, wk.depotKnown?'pg-calc':'pg-assumed',
+    withMath('Total (B17) moins Coupons/Win (B12) moins Depot.' + (wk.depotKnown?'':' Compté avec Depot à 0.'), [B17, -B12, -wk.depot], J8));
+  cell(10,9,'Over','pg-label');
+  cell(10,10,J10,'pg-calc', withMath('Over poker (D17) = Total (B17) moins Total inséré (F12).', [B17, -F12], J10));
 
-  cell(12,1,'Total','pg-label'); cell(12,2,B12,'pg-calc', 'Somme des Coupons/Win des 7 jours de la semaine.');
-  cell(12,5,'Total','pg-label'); cell(12,6,F12,'pg-calc', 'Somme des montants Insérés des 7 jours.'); cell(12,7,G12,'pg-calc', 'Somme des Net (Inséré − Win) des 7 jours.');
-  cell(12,9,'Depart','pg-label'); cell(12,10,J12, wk.depotKnown?'pg-calc':'pg-assumed', 'Reste + Over — devient le "Depart: Over from Cash" de la semaine prochaine.' + (wk.depotKnown?'':' Compté avec Depot à 0.'));
+  cell(12,1,'Total','pg-label'); cell(12,2,B12,'pg-calc', withMath('Somme des Coupons/Win des 7 jours de la semaine.', dayData.map(r=>r.win), B12));
+  cell(12,5,'Total','pg-label');
+  cell(12,6,F12,'pg-calc', withMath('Somme des montants Insérés des 7 jours.', dayData.map(r=>r.inserted), F12));
+  cell(12,7,G12,'pg-calc', withMath('Somme des Net (Inséré − Win) des 7 jours.', dayData.map(r=>r.net), G12));
+  cell(12,9,'Depart','pg-label');
+  cell(12,10,J12, wk.depotKnown?'pg-calc':'pg-assumed',
+    withMath('Reste + Over — devient le "Depart: Over from Cash" de la semaine prochaine.' + (wk.depotKnown?'':' Compté avec Depot à 0.'), [J8, D17], J12));
 
-  cell(14,1,'Argent','pg-label'); cell(14,2,B14,'pg-calc', 'Cash dans la caisse (distinct du guichet) — somme de la semaine, onglet Poker.');
+  cell(14,1,'Argent','pg-label'); cell(14,2,B14,'pg-calc', 'Cash dans la caisse (distinct du guichet) — valeur de dimanche uniquement, onglet Poker.');
   cell(14,9,'Total','pg-label'); cell(14,10,J14,'pg-calc', 'Net total de la semaine (G12).'); cell(14,11,'total net','pg-label');
 
-  cell(15,1,'machine','pg-label'); cell(15,2,B15,'pg-calc', 'Tickets trouvés dans les machines — somme de la semaine, onglet Poker.');
-  cell(15,9,'LottoQ','pg-label'); cell(15,10,J15,'pg-calc', 'Net total de la semaine × 0.8.'); cell(15,11,'0.8','pg-label');
+  cell(15,1,'machine','pg-label'); cell(15,2,B15,'pg-calc', withMath('Tickets trouvés dans les machines — somme de la semaine, onglet Poker.', dayData.map(r=>r.machine), B15));
+  cell(15,9,'LottoQ','pg-label'); cell(15,10,J15,'pg-calc', `Net total de la semaine × 0.8.\n${J14} × 0.8 = ${J15}`); cell(15,11,'0.8','pg-label');
 
-  cell(16,1,'Guichet','pg-label'); cell(16,2,B16,'pg-calc', 'Argent déposé au guichet — somme de la semaine, onglet Poker.');
-  cell(16,9,'Club','pg-label'); cell(16,10,J16,'pg-calc', 'Net total de la semaine × 0.2.'); cell(16,11,'0.2','pg-label');
+  cell(16,1,'Guichet','pg-label'); cell(16,2,B16,'pg-calc', withMath('Argent déposé au guichet — somme de la semaine, onglet Poker.', dayData.map(r=>r.guichet), B16));
+  cell(16,9,'Club','pg-label'); cell(16,10,J16,'pg-calc', `Net total de la semaine × 0.2.\n${J14} × 0.2 = ${J16}`); cell(16,11,'0.2','pg-label');
 
-  cell(17,1,'Total','pg-label'); cell(17,2,B17,'pg-calc', 'Coupons/Win + Argent + Machine + Guichet — total de la semaine.');
-  cell(17,3,'over poker','pg-label'); cell(17,4,D17,'pg-calc', 'Total (B17) moins Total inséré (F12) de la semaine.');
+  cell(17,1,'Total','pg-label'); cell(17,2,B17,'pg-calc', withMath('Coupons/Win + Argent + Machine + Guichet — total de la semaine.', [B12,B14,B15,B16], B17));
+  cell(17,3,'over poker','pg-label'); cell(17,4,D17,'pg-calc', withMath('Total (B17) moins Total inséré (F12) de la semaine.', [B17,-F12], D17));
 
   wrap.appendChild(grid);
   wrap.appendChild(buildBottomBar());
@@ -4133,8 +4211,10 @@ function buildStockSection(shiftType, bucket, options){
     function recalcTotal(){
       rowStore.total = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       inTotal.value = rowStore.total;
+      inTotal.title = withMath('Total = Début + Ajouté − Fin.', [numOrZero(rowStore.debut), numOrZero(rowStore.ajoutBeers), -numOrZero(rowStore.fin)], rowStore.total);
       inTotal.classList.remove('mismatch-cell'); // recalculated automatically, so it matches again by construction
     }
+    inTotal.title = withMath('Total = Début + Ajouté − Fin.', [numOrZero(rowStore.debut), numOrZero(rowStore.ajoutBeers), -numOrZero(rowStore.fin)], numOrZero(rowStore.total));
     function checkTotalOverride(){
       const expected = roundInt(numOrZero(rowStore.debut) + numOrZero(rowStore.ajoutBeers) - numOrZero(rowStore.fin));
       const mismatch = numOrZero(rowStore.total) !== expected;
@@ -4477,6 +4557,14 @@ function buildInventairePanel(options){
     totalInputs[key] = totalDisplay;
 
     const attendu = Number(item.expected) || 0;
+    // Écart and Nouveau Total are the same two numbers either direction — keep both
+    // inputs' hovers showing the real numbers, whichever one was actually typed.
+    function updateEcartTooltips(){
+      const total = numOrZero(store[key].total);
+      const ecart = numOrZero(store[key].ecart);
+      inEcart.title = withMath('Écart = Nouveau total − Attendu.', [total, -attendu], ecart);
+      totalDisplay.title = withMath('Nouveau total = Attendu + Écart.', [attendu, ecart], total);
+    }
     // Once Ajouté changes, auto-suggest both Écart and Nouveau Total from
     // Nuit Fin + Ajouté — still fully editable afterward via their own inputs.
     inAdded.addEventListener('input', ()=>{
@@ -4488,22 +4576,26 @@ function buildInventairePanel(options){
       totalDisplay.value = suggested;
       store[key].ecart = roundInt(suggested - attendu);
       inEcart.value = store[key].ecart;
+      updateEcartTooltips();
       recalcSold(key); checkCloseOut(key);
     });
     inEcart.addEventListener('input', ()=>{
       store[key].ecart = inEcart.value;
       store[key].total = inEcart.value === "" ? "" : roundInt(attendu + Number(inEcart.value));
       totalDisplay.value = store[key].total;
+      updateEcartTooltips();
       recalcSold(key); checkCloseOut(key);
     });
     totalDisplay.addEventListener('input', ()=>{
       store[key].total = totalDisplay.value;
       store[key].ecart = totalDisplay.value === "" ? "" : roundInt(Number(totalDisplay.value) - attendu);
       inEcart.value = store[key].ecart;
+      updateEcartTooltips();
       recalcSold(key); checkCloseOut(key);
     });
     enforceWholeNumber(inEcart); clampThreeDigits(inEcart, true);
     enforceWholeNumber(totalDisplay); clampThreeDigits(totalDisplay, false);
+    updateEcartTooltips();
     tdEcart.appendChild(inEcart); tdTotal.appendChild(totalDisplay);
 
     // Warning — only appears when the bartender chain doesn't match Inventaire's own count.
@@ -4631,7 +4723,8 @@ function buildInventairePanel(options){
       const janitorAjout = Number(store[key].added) || 0;
       const sold = round2(yTotal - tToday + dayAjout + nightAjout + janitorAjout);
       soldCells[key].textContent = sold;
-      soldCells[key].title = `${yTotal} (hier) − ${tToday} (aujourd'hui) + ${dayAjout} (ajout jour) + ${nightAjout} (ajout soir) + ${janitorAjout} (ajouté janitor) = ${sold}`;
+      soldCells[key].title = withMath('Hier − Aujourd\'hui + Ajout jour + Ajout soir + Ajouté janitor.',
+        [yTotal, -tToday, dayAjout, nightAjout, janitorAjout], sold);
     });
   }
   recalcSold();
@@ -5558,8 +5651,10 @@ function buildBottlesOwnerPanel(){
     tdCurrent.className = 'preview-cell';
     function refreshCurrent(){
       const pendingAdd = Number(addInput.value) || 0;
-      const current = roundInt(Number(startInput.value||0) - removedTotal + ownerState.totalAdded + pendingAdd);
+      const start = Number(startInput.value||0);
+      const current = roundInt(start - removedTotal + ownerState.totalAdded + pendingAdd);
       tdCurrent.textContent = current;
+      tdCurrent.title = withMath('Actuel = Départ − Retiré + Ajouté.', [start, -removedTotal, ownerState.totalAdded + pendingAdd], current);
     }
     startInput.addEventListener('input', refreshCurrent);
     addInput.addEventListener('input', refreshCurrent);
